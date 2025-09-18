@@ -1,0 +1,17 @@
+[gd_scene load_steps=4 format=3 uid="uid://bl1qdj3uuomep"]
+
+[ext_resource type="Texture2D" uid="uid://b75d4vorapg0q" path="res://assets/slipper.png" id="1_slp"]
+[ext_resource type="Script" uid="uid://b8jds8w4mxqpw" path="res://scripts/slipper.gd" id="2_slp"]
+
+[sub_resource type="RectangleShape2D" id="Shape2D_slp"]
+size = Vector2(4, 2)
+
+[node name="Slipper" type="Area2D"]
+script = ExtResource("2_slp")
+
+[node name="Sprite2D" type="Sprite2D" parent="."]
+scale = Vector2(0.0853306, 0.0691748)
+texture = ExtResource("1_slp")
+
+[node name="CollisionShape2D" type="CollisionShape2D" parent="."]
+shape = SubResource("Shape2D_slp")
