@@ -11,10 +11,18 @@ var current_dir = "none"
 const RUN_MULTIPLIER := 1.6
 const RUN_ACCEL_MULTIPLIER := 1.6
 @export var slipper_scene: PackedScene = preload("res://scenes/slipper.tscn")
+@export var aim_arrow_scene: PackedScene = preload("res://scenes/aim_arrow.tscn")
 var is_throwing: bool = false
 var _last_dir_vec: Vector2 = Vector2.DOWN
 const MAX_SLIPPERS := 3
 var slippers_available: int = MAX_SLIPPERS
+var is_hurt: bool = false
+var is_aiming: bool = false
+var _aim_arrow: Node2D = null
+const CHARGE_TIME := 1.0 # seconds to reach max power
+const MIN_SPEED_MULT := 0.7
+const MAX_SPEED_MULT := 2.0
+var _aim_started_at: float = 0.0
 
 func _ready() -> void:
 	$AnimatedSprite2D.play("front_idle")
@@ -25,14 +33,37 @@ func _ready() -> void:
 
 func _physics_process(delta: float) -> void:
 	player_movement(delta)
+	# Update aim arrow while aiming
+	if is_aiming and _aim_arrow != null:
+		var dir := (get_global_mouse_position() - global_position)
+		if dir.length() > 0.0 and _aim_arrow.has_method("point_towards"):
+			_aim_arrow.point_towards(dir)
+		# Update arrow length based on charge power
+		var now: float = float(Time.get_ticks_msec()) / 1000.0
+		var t: float = clamp((now - _aim_started_at) / CHARGE_TIME, 0.0, 1.0)
+		if _aim_arrow.has_method("_set_length"):
+			_aim_arrow._set_length(48.0 + 48.0 * t)
 
 func _unhandled_input(event: InputEvent) -> void:
-	if event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
-		if is_throwing:
-			return
-		if slippers_available <= 0:
-			return
-		_throw_slipper()
+	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
+		if event.pressed:
+			# Start aiming
+			if is_throwing or is_hurt or slippers_available <= 0:
+				return
+			_start_aim()
+		else:
+			# Release to throw
+			if not is_aiming:
+				return
+			var dir_vec := (get_global_mouse_position() - global_position).normalized()
+			if dir_vec == Vector2.ZERO:
+				dir_vec = (_last_dir_vec if _last_dir_vec.length() > 0 else Vector2.DOWN).normalized()
+			# Compute power multiplier from hold time
+			var now: float = float(Time.get_ticks_msec()) / 1000.0
+			var t: float = clamp((now - _aim_started_at) / CHARGE_TIME, 0.0, 1.0)
+			var power_mult: float = lerp(MIN_SPEED_MULT, MAX_SPEED_MULT, t)
+			_stop_aim()
+			_throw_slipper_dir(dir_vec, power_mult)
 
 func player_movement(delta):
 	# Get input direction
@@ -76,6 +107,8 @@ func player_movement(delta):
 	move_and_slide()
 	
 func play_anim(movement: int, is_running: bool):
+	if is_hurt:
+		return
 	if is_throwing:
 		return
 	var dir = current_dir
@@ -159,6 +192,38 @@ func play_anim(movement: int, is_running: bool):
 			anim.play(name)
 			return
 
+func play_hurt_from(attacker_global_pos: Vector2) -> void:
+	if is_hurt:
+		return
+	is_hurt = true
+	var anim: AnimatedSprite2D = $AnimatedSprite2D
+	# Determine whether the hit comes from above (back) or below (front)
+	var to_self := global_position - attacker_global_pos
+	var base := "front"
+	if to_self.y < 0.0:
+		base = "back"
+	# Flip for left side hits
+	anim.flip_h = to_self.x < 0.0
+	var candidates: Array[String] = [base + "_hurt", base]
+	# Fallbacks to generic idles if hurt clips not found
+	candidates.append(base + "_idle")
+	candidates.append("front_idle")
+	# Play the first available hurt/idle
+	var chosen := _choose_first_available(anim, candidates)
+	if chosen != "":
+		anim.play(chosen)
+	# Lock for a short duration or use clip length if non-looping
+	var lock_time := 0.35
+	var frames := anim.sprite_frames
+	if frames and chosen != "":
+		var fps := frames.get_animation_speed(chosen)
+		var frame_count := frames.get_frame_count(chosen)
+		var loops := frames.get_animation_loop(chosen)
+		if fps > 0.0 and frame_count > 0 and not loops:
+			lock_time = float(frame_count) / fps
+	await get_tree().create_timer(lock_time).timeout
+	is_hurt = false
+
 func _throw_slipper() -> void:
 	var anim: AnimatedSprite2D = $AnimatedSprite2D
 	# Aim towards mouse; fallback to last movement dir or down
@@ -224,6 +289,58 @@ func _choose_first_available(anim: AnimatedSprite2D, names: Array[String]) -> St
 		if frames and frames.has_animation(n):
 			return n
 	return ""
+
+func _throw_slipper_dir(dir_vec: Vector2, power_mult: float = 1.0) -> void:
+	# Helper to throw with a precomputed direction vector
+	var base := _base_from_vec(dir_vec)
+	if slipper_scene:
+		var s = slipper_scene.instantiate()
+		if s:
+			get_parent().add_child(s)
+			s.global_position = global_position + dir_vec.normalized() * 32.0
+			if s.has_method("init"):
+				s.init(dir_vec, power_mult)
+			if s.has_signal("picked_up"):
+				s.connect("picked_up", Callable(self, "_on_slipper_picked"))
+			slippers_available = max(0, slippers_available - 1)
+			ammo_changed.emit(slippers_available, MAX_SLIPPERS)
+	# Trigger throw animation and lock
+	is_throwing = true
+	var anim: AnimatedSprite2D = $AnimatedSprite2D
+	var candidates: Array[String] = []
+	var base_name := ("front" if dir_vec.y >= 0.0 else "back")
+	if base_name == "front":
+		candidates = ["front_throw", "front_walk", "front_idle"]
+	else:
+		candidates = ["back_throw", "back_walk", "back_idle", "front_idle"]
+	_play_first_available(anim, candidates)
+	var frames2: SpriteFrames = anim.sprite_frames
+	var chosen2 := _choose_first_available(anim, candidates)
+	var lock_time := 0.25
+	if frames2 and chosen2 != "":
+		var fps := frames2.get_animation_speed(chosen2)
+		var frame_count := frames2.get_frame_count(chosen2)
+		var loops := frames2.get_animation_loop(chosen2)
+		if fps > 0.0 and frame_count > 0 and not loops:
+			lock_time = float(frame_count) / fps
+	await get_tree().create_timer(lock_time).timeout
+	is_throwing = false
+
+func _start_aim() -> void:
+	is_aiming = true
+	_aim_started_at = float(Time.get_ticks_msec()) / 1000.0
+	if aim_arrow_scene and _aim_arrow == null:
+		_aim_arrow = aim_arrow_scene.instantiate()
+		_aim_arrow.position = Vector2.ZERO
+		add_child(_aim_arrow)
+		if _aim_arrow.has_method("_set_length"):
+			_aim_arrow._set_length(48.0)
+
+func _stop_aim() -> void:
+	is_aiming = false
+	if _aim_arrow != null:
+		_aim_arrow.queue_free()
+		_aim_arrow = null
 
 func _base_from_dir(dir: String) -> String:
 	match dir:

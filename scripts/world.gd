@@ -16,6 +16,7 @@ func _ready() -> void:
 		# Instance and place the player
 		if player_scene:
 			var player := player_scene.instantiate()
+			player.name = "player"
 			# Add under the TileMap to match your scene layout
 			if tilemap:
 				tilemap.add_child(player)
@@ -31,6 +32,9 @@ func _ready() -> void:
 				player.global_position = tilemap.to_global(spawn)
 			else:
 				player.global_position = spawn
+
+	# Build perimeter walls from the TileMap bounds
+	_create_bounds_walls()
 
 	# Ensure HUD exists and is connected to the player ammo signal
 	var the_player: Node = get_node_or_null("TileMap/player")
@@ -58,3 +62,39 @@ func _compute_default_spawn() -> Vector2:
 		var local_pos: Vector2 = tilemap.map_to_local(center_cell)
 		return local_pos + Vector2(tile_size) * 0.5
 	return Vector2.ZERO
+
+func _create_bounds_walls() -> void:
+	if not tilemap:
+		return
+	var used_rect: Rect2i = tilemap.get_used_rect()
+	if used_rect.size == Vector2i.ZERO:
+		return
+	var ts: Vector2i = tilemap.tile_set.tile_size
+	var left := float(used_rect.position.x * ts.x)
+	var top := float(used_rect.position.y * ts.y)
+	var right := float((used_rect.position.x + used_rect.size.x) * ts.x)
+	var bottom := float((used_rect.position.y + used_rect.size.y) * ts.y)
+	var inset := 8.0
+	left += inset; top += inset; right -= inset; bottom -= inset
+
+	var walls := StaticBody2D.new()
+	walls.name = "Bounds"
+	$TileMap.add_child(walls)
+	# Helper to make a rectangle CollisionShape2D (local lambda)
+	var add_rect := func(center: Vector2, size: Vector2) -> void:
+		var shape := RectangleShape2D.new()
+		shape.size = size
+		var cs := CollisionShape2D.new()
+		cs.shape = shape
+		cs.position = center
+		walls.add_child(cs)
+
+	var thickness := 16.0
+	# Top
+	add_rect.call(Vector2((left + right) * 0.5, top - thickness * 0.5), Vector2(right - left, thickness))
+	# Bottom
+	add_rect.call(Vector2((left + right) * 0.5, bottom + thickness * 0.5), Vector2(right - left, thickness))
+	# Left
+	add_rect.call(Vector2(left - thickness * 0.5, (top + bottom) * 0.5), Vector2(thickness, bottom - top))
+	# Right
+	add_rect.call(Vector2(right + thickness * 0.5, (top + bottom) * 0.5), Vector2(thickness, bottom - top))

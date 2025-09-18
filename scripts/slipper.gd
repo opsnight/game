@@ -7,12 +7,13 @@ signal picked_up
 @export var pickup_radius: float = 18.0
 var velocity: Vector2 = Vector2.ZERO
 
-func init(dir: Vector2) -> void:
+func init(dir: Vector2, power: float = 1.0) -> void:
 	# Initialize direction and rotation
-	var d := dir
+	var d: Vector2 = dir
 	if d.length() == 0:
 		d = Vector2.DOWN
-	velocity = d.normalized() * speed
+	var p: float = max(0.05, power)
+	velocity = d.normalized() * speed * p
 	rotation = velocity.angle()
 
 func _physics_process(delta: float) -> void:
@@ -23,7 +24,7 @@ func _physics_process(delta: float) -> void:
 		rotation = velocity.angle()
 
 	# Proximity pickup: if player is nearby, auto-pick
-	var player := get_tree().current_scene.find_child("player", true, false)
+	var player: Node = get_tree().current_scene.find_child("player", true, false)
 	if player and player is CharacterBody2D:
 		if global_position.distance_to(player.global_position) <= pickup_radius:
 			emit_signal("picked_up")
