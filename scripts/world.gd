@@ -4,6 +4,8 @@ extends Node2D
 @export var player_scene: PackedScene = preload("res://scenes/player.tscn")
 @export var spawn_position: Vector2 = Vector2.ZERO
 @export var hud_scene: PackedScene = preload("res://scenes/hud.tscn")
+@export var can_scene: PackedScene = preload("res://scenes/can.tscn")
+@export var can_spawn_position: Vector2 = Vector2.ZERO
 
 func _ready() -> void:
 	# Ensure the TileMap is in the expected group for the Player camera limits
@@ -36,6 +38,10 @@ func _ready() -> void:
 	# Build perimeter walls from the TileMap bounds
 	_create_bounds_walls()
 
+	# Ensure a can exists in the scene
+	_create_or_place_can()
+	_dedupe_cans_keep_rightmost()
+
 	# Ensure HUD exists and is connected to the player ammo signal
 	var the_player: Node = get_node_or_null("TileMap/player")
 	if the_player == null:
@@ -55,6 +61,16 @@ func _ready() -> void:
 
 func _compute_default_spawn() -> Vector2:
 	# Place the player roughly at the center of the used TileMap area
+	if tilemap:
+		var used_rect: Rect2i = tilemap.get_used_rect()
+		var tile_size: Vector2i = tilemap.tile_set.tile_size
+		var center_cell: Vector2i = used_rect.position + used_rect.size / 2
+		var local_pos: Vector2 = tilemap.map_to_local(center_cell)
+		return local_pos + Vector2(tile_size) * 0.5
+	return Vector2.ZERO
+
+func _compute_default_can_spawn() -> Vector2:
+	# Place can roughly near the center of the playfield
 	if tilemap:
 		var used_rect: Rect2i = tilemap.get_used_rect()
 		var tile_size: Vector2i = tilemap.tile_set.tile_size
@@ -98,3 +114,48 @@ func _create_bounds_walls() -> void:
 	add_rect.call(Vector2(left - thickness * 0.5, (top + bottom) * 0.5), Vector2(thickness, bottom - top))
 	# Right
 	add_rect.call(Vector2(right + thickness * 0.5, (top + bottom) * 0.5), Vector2(thickness, bottom - top))
+
+func _create_or_place_can() -> void:
+	if not can_scene:
+		return
+	var existing_can: Node = _find_any_can()
+	if existing_can == null:
+		var can: Node2D = can_scene.instantiate()
+		var parent_node: Node = tilemap if tilemap != null else self
+		parent_node.add_child(can)
+		can.name = "Can"
+		var spawn: Vector2 = can_spawn_position
+		if spawn == Vector2.ZERO:
+			spawn = _compute_default_can_spawn()
+		if tilemap:
+			can.global_position = tilemap.to_global(spawn)
+		else:
+			can.global_position = spawn
+
+func _find_any_can() -> Node:
+	# Prefer group lookup; fallback to deep name search
+	var cans := get_tree().get_nodes_in_group("can")
+	if cans.size() > 0:
+		return cans[0]
+	return get_tree().current_scene.find_child("Can", true, false)
+
+func _dedupe_cans_keep_rightmost() -> void:
+	# If multiple cans exist (e.g., one manually placed and one auto-spawned),
+	# keep the right-most one and remove the rest.
+	var cans: Array = []
+	for n in get_tree().get_nodes_in_group("can"):
+		if n is Node2D:
+			cans.append(n)
+	# Also include any nodes named 'Can' not in group
+	var found := get_tree().current_scene.find_child("Can", true, false)
+	if found and found is Node2D and not cans.has(found):
+		cans.append(found)
+	if cans.size() <= 1:
+		return
+	var keep: Node2D = cans[0]
+	for c in cans:
+		if c.global_position.x > keep.global_position.x:
+			keep = c
+	for c in cans:
+		if c != keep:
+			c.queue_free()

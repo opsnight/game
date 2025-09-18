@@ -1,4 +1,4 @@
-[gd_scene load_steps=11 format=3 uid="uid://cwjhoma60xhne"]
+[gd_scene load_steps=12 format=3 uid="uid://cwjhoma60xhne"]
 
 [ext_resource type="Texture2D" uid="uid://dsd0q3b60p7so" path="res://assets/Top_Down_Asset/Top_Down_Asset/Tileset/Tileset.png" id="1_4wyf3"]
 [ext_resource type="Texture2D" uid="uid://b5l3ftrmn1gac" path="res://assets/Top_Down_Asset/Top_Down_Asset/Tileset/Decoration.png" id="2_k0juu"]
@@ -6,6 +6,7 @@
 [ext_resource type="Script" uid="uid://biij7c7inxm8a" path="res://scripts/world.gd" id="4_world"]
 [ext_resource type="PackedScene" uid="uid://bqxen38e86hcx" path="res://scenes/player.tscn" id="5_71j4m"]
 [ext_resource type="PackedScene" uid="uid://c7q5q024rr82o" path="res://scenes/player_2.tscn" id="6_qfnet"]
+[ext_resource type="PackedScene" uid="uid://cv1eai3j24woi" path="res://scenes/can.tscn" id="7_i7141"]
 
 [sub_resource type="TileSetAtlasSource" id="TileSetAtlasSource_qfnet"]
 texture = ExtResource("1_4wyf3")
@@ -204,4 +205,7 @@ layer_2/tile_data = PackedInt32Array(1572878, 2, 11, 1638414, 2, 12, 1703950, 2,
 position = Vector2(422, 323)
 
 [node name="player 2" parent="TileMap" instance=ExtResource("6_qfnet")]
-position = Vector2(716, 320)
+position = Vector2(723, 322)
+
+[node name="Can" parent="." instance=ExtResource("7_i7141")]
+position = Vector2(815, 322)

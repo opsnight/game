@@ -1,0 +1,19 @@
+[gd_scene load_steps=4 format=3 uid="uid://cv1eai3j24woi"]
+
+[ext_resource type="Texture2D" uid="uid://bqmhpp481h3q0" path="res://assets/can.png" id="1_tex"]
+[ext_resource type="Script" uid="uid://djvx7pofxvdy" path="res://scripts/can.gd" id="2_script"]
+
+[sub_resource type="RectangleShape2D" id="1_rect"]
+size = Vector2(23, 29)
+
+[node name="Can" type="RigidBody2D"]
+mass = 0.3
+script = ExtResource("2_script")
+
+[node name="CollisionShape2D" type="CollisionShape2D" parent="."]
+position = Vector2(-0.5, 0.5)
+shape = SubResource("1_rect")
+
+[node name="Sprite2D" type="Sprite2D" parent="."]
+scale = Vector2(0.6, 0.6)
+texture = ExtResource("1_tex")
