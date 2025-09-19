@@ -1,50 +1,61 @@
-extends Area2D
+extends RigidBody2D
 
 signal picked_up
 
+# Throw parameters (top-down, so no gravity)
 @export var speed: float = 300.0
-@export var drag: float = 250.0
-@export var pickup_radius: float = 18.0
-var velocity: Vector2 = Vector2.ZERO
+@export var linear_damp_when_free: float = 4.0
+@export var angular_spin: float = 6.0
+@export var pickup_radius: float = 24.0
+
+@onready var pickup_area: Area2D = get_node_or_null("PickupArea")
 
 func _ready() -> void:
 	if not is_in_group("slipper"):
 		add_to_group("slipper")
-	# Detect physics bodies we hit (e.g., the can)
+	# Enable contact monitoring so we can detect overlaps for pickup and cans
+	contact_monitor = true
+	max_contacts_reported = 8
+	# Connect to body_entered if available
 	if has_signal("body_entered"):
 		connect("body_entered", Callable(self, "_on_body_entered"))
+	# Setup pickup area for reliable player contact detection
+	if pickup_area:
+		pickup_area.body_entered.connect(Callable(self, "_on_pickup_body_entered"))
+		# Ensure the area can detect most bodies regardless of project layers
+		pickup_area.collision_mask = 0x7FFFFFFF
+	# No gravity in top-down
+	gravity_scale = 0.0
+	# Let the body slow down naturally
+	linear_damp = linear_damp_when_free
+	angular_damp = 1.5
 
 func init(dir: Vector2, power: float = 1.0) -> void:
-	# Initialize direction and rotation
+	# Initialize throw direction and set physics velocities
 	var d: Vector2 = dir
 	if d.length() == 0:
 		d = Vector2.DOWN
 	var p: float = max(0.05, power)
-	velocity = d.normalized() * speed * p
-	rotation = velocity.angle()
+	linear_velocity = d.normalized() * speed * p
+	# Give a little spin for visual appeal
+	angular_velocity = sign(d.x) * angular_spin
+	rotation = linear_velocity.angle()
 
 func _physics_process(delta: float) -> void:
-	# Basic projectile motion with drag
-	position += velocity * delta
-	velocity = velocity.move_toward(Vector2.ZERO, drag * delta)
-	if velocity.length() > 0.0:
-		rotation = velocity.angle()
-
-	# Proximity pickup: if player is nearby, auto-pick
-	var player: Node = get_tree().current_scene.find_child("player", true, false)
-	if player and player is CharacterBody2D:
-		if global_position.distance_to(player.global_position) <= pickup_radius:
-			emit_signal("picked_up")
-			queue_free()
+	# Align sprite to travel direction when moving
+	if linear_velocity.length() > 1.0:
+		rotation = linear_velocity.angle()
 
 func _on_body_entered(body: Node) -> void:
-	# Hit the can (RigidBody2D) -> transfer impulse and free slipper
+	# If we hit a can, let physics handle the impulse. Optionally notify the can.
 	if body and body.is_in_group("can"):
 		if body.has_method("hit_from"):
-			body.hit_from(velocity, global_position)
-		queue_free()
+			body.hit_from(linear_velocity, global_position)
+		# Do NOT free the slipper; it should remain in the scene to be retrieved
 		return
-	# Auto-pickup when the player touches the slipper
+
+func _on_pickup_body_entered(body: Node) -> void:
+	# Dedicated handler for the PickupArea -> only pick up when player overlaps the area
 	if body is CharacterBody2D and ("player" in String(body.name).to_lower() or body.has_method("_on_slipper_picked")):
 		emit_signal("picked_up")
 		queue_free()

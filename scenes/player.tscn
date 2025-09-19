@@ -533,7 +533,7 @@ shape = SubResource("RectangleShape2D_player")
 [node name="AnimatedSprite2D" type="AnimatedSprite2D" parent="."]
 position = Vector2(3, -2)
 sprite_frames = SubResource("SpriteFrames_77e46")
-animation = &"back_throw"
+animation = &"front_idle"
 autoplay = "front_idle"
 
 [node name="Camera2D" type="Camera2D" parent="."]

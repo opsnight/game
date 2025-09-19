@@ -20,9 +20,13 @@ func _on_body_entered(body: Node) -> void:
 
 func _apply_hit_from(node: Node) -> void:
 	var impulse: Vector2 = Vector2.ZERO
-	if "velocity" in node:
-		var v: Vector2 = node.velocity
+	# Support both old Area2D slippers (velocity) and new RigidBody2D slippers (linear_velocity)
+	if "linear_velocity" in node:
+		var v: Vector2 = node.linear_velocity
 		impulse = v * hit_impulse_scale
+	elif "velocity" in node:
+		var v2: Vector2 = node.velocity
+		impulse = v2 * hit_impulse_scale
 	if impulse.length() < min_impulse:
 		var dir: Vector2 = (global_position - node.global_position)
 		if dir.length() == 0:

@@ -64,6 +64,10 @@ func _unhandled_input(event: InputEvent) -> void:
 			var power_mult: float = lerp(MIN_SPEED_MULT, MAX_SPEED_MULT, t)
 			_stop_aim()
 			_throw_slipper_dir(dir_vec, power_mult)
+	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_RIGHT and event.pressed:
+		_recall_nearest_slipper()
+	if event.is_action_pressed("recall"):
+		_recall_nearest_slipper()
 
 func player_movement(delta):
 	# Get input direction
@@ -341,6 +345,23 @@ func _stop_aim() -> void:
 	if _aim_arrow != null:
 		_aim_arrow.queue_free()
 		_aim_arrow = null
+
+func _recall_nearest_slipper() -> void:
+	# Find the closest active slipper in the scene and trigger its recall behavior
+	var root: Node = get_tree().current_scene
+	if root == null:
+		return
+	var best: Node2D = null
+	var best_d2: float = INF
+	for n in root.get_tree().get_nodes_in_group("slipper"):
+		if n is Node2D and n.is_inside_tree():
+			var sn: Node2D = n as Node2D
+			var d2: float = (sn.global_position - global_position).length_squared()
+			if d2 < best_d2:
+				best = sn
+				best_d2 = d2
+	if best and best.has_method("begin_recall"):
+		best.begin_recall()
 
 func _base_from_dir(dir: String) -> String:
 	match dir:
