@@ -2,6 +2,8 @@ extends RigidBody2D
 
 @export var hit_impulse_scale: float = 1.2
 @export var min_impulse: float = 150.0
+@export var max_impulse: float = 1200.0
+@export var fence_margin: float = 24.0 # keep can inside the fence by this margin
 
 # Remember original spawn to allow resets and knockdown checks
 var original_position: Vector2
@@ -12,9 +14,11 @@ func _ready() -> void:
 	# Enable contact monitoring so body_entered works on RigidBody2D
 	contact_monitor = true
 	max_contacts_reported = 8
+	# Reduce tunneling through walls
+	continuous_cd = RigidBody2D.CCD_MODE_CAST_SHAPE
 	gravity_scale = 0.0
-	linear_damp = 6.0
-	angular_damp = 6.0
+	linear_damp = 8.0
+	angular_damp = 8.0
 	if not is_in_group("can"):
 		add_to_group("can")
 	self.body_entered.connect(Callable(self, "_on_body_entered"))
@@ -39,6 +43,8 @@ func _apply_hit_from(node: Node) -> void:
 		if dir.length() == 0:
 			dir = Vector2.UP
 		impulse = dir.normalized() * min_impulse
+	if impulse.length() > max_impulse:
+		impulse = impulse.limit_length(max_impulse)
 	apply_impulse(impulse)
 
 func is_knocked_down(threshold: float = 30.0) -> bool:
@@ -89,6 +95,26 @@ func _physics_process(delta: float) -> void:
 				"down_right": to_dir = Vector2(1,1).normalized()
 				"down_left": to_dir = Vector2(-1,1).normalized()
 		global_position = carrier.global_position + to_dir * 20.0
+		_clamp_inside_world()
+	else:
+		# Hard clamp within world tilemap bounds so the can never escapes the fence
+		_clamp_inside_world()
+
+func _integrate_forces(state: PhysicsDirectBodyState2D) -> void:
+	# Extra safety: clamp position during the physics integration step to fully prevent tunneling
+	if is_being_carried:
+		return
+	var bounds := _get_world_bounds()
+	if bounds.is_empty():
+		return
+	var min_v: Vector2 = bounds["min"]
+	var max_v: Vector2 = bounds["max"]
+	var pos: Vector2 = state.transform.origin
+	var clamped: Vector2 = Vector2(clamp(pos.x, min_v.x, max_v.x), clamp(pos.y, min_v.y, max_v.y))
+	if clamped != pos:
+		state.transform.origin = clamped
+		state.linear_velocity = Vector2.ZERO
+		state.angular_velocity = 0.0
 
 func hit_from(vel: Vector2, hit_pos: Vector2) -> void:
 	# Public API for Area2D (slipper) to notify hits
@@ -99,3 +125,43 @@ func hit_from(vel: Vector2, hit_pos: Vector2) -> void:
 			dir = Vector2.UP
 		impulse = dir.normalized() * min_impulse
 	apply_impulse(impulse)
+
+func _clamp_inside_world() -> void:
+	var bounds := _get_world_bounds()
+	if bounds.is_empty():
+		return
+	var min_v: Vector2 = bounds["min"]
+	var max_v: Vector2 = bounds["max"]
+	var pos: Vector2 = global_position
+	var clamped: Vector2 = Vector2(clamp(pos.x, min_v.x, max_v.x), clamp(pos.y, min_v.y, max_v.y))
+	if clamped != pos:
+		# Teleport back inside and stop motion to avoid tunneling back out
+		freeze = true
+		global_position = clamped
+		linear_velocity = Vector2.ZERO
+		angular_velocity = 0.0
+		freeze = false
+
+func _get_world_bounds() -> Dictionary:
+	var tilemap := get_tree().get_first_node_in_group("world_tilemap")
+	if tilemap == null or not (tilemap is TileMap):
+		return {}
+	var tm: TileMap = tilemap as TileMap
+	var used_rect: Rect2i = tm.get_used_rect()
+	var tile_size: Vector2i = tm.tile_set.tile_size
+	# Compute bounds in TileMap local space then convert to global
+	var left_local: float = float(used_rect.position.x * tile_size.x)
+	var top_local: float = float(used_rect.position.y * tile_size.y)
+	var right_local: float = float((used_rect.position.x + used_rect.size.x) * tile_size.x)
+	var bottom_local: float = float((used_rect.position.y + used_rect.size.y) * tile_size.y)
+	var top_left_global: Vector2 = tm.to_global(Vector2(left_local, top_local))
+	var bottom_right_global: Vector2 = tm.to_global(Vector2(right_local, bottom_local))
+	var left: float = min(top_left_global.x, bottom_right_global.x)
+	var top: float = min(top_left_global.y, bottom_right_global.y)
+	var right: float = max(top_left_global.x, bottom_right_global.x)
+	var bottom: float = max(top_left_global.y, bottom_right_global.y)
+	var margin: float = fence_margin
+	return {
+		"min": Vector2(left + margin, top + margin),
+		"max": Vector2(right - margin, bottom - margin)
+	}

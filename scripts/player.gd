@@ -15,7 +15,7 @@ const RUN_ACCEL_MULTIPLIER := 1.6
 @export var aim_arrow_scene: PackedScene = preload("res://scenes/aim_arrow.tscn")
 var is_throwing: bool = false
 var _last_dir_vec: Vector2 = Vector2.DOWN
-const MAX_SLIPPERS := 3
+const MAX_SLIPPERS := 1
 var slippers_available: int = MAX_SLIPPERS
 var is_hurt: bool = false
 var is_aiming: bool = false
@@ -30,6 +30,7 @@ var _aim_started_at: float = 0.0
 var base_center: Vector2
 var can_leave_base: bool = false
 var at_base: bool = true
+var is_vulnerable: bool = false
 
 func _ready() -> void:
 	$AnimatedSprite2D.play("front_idle")
@@ -54,6 +55,9 @@ func _physics_process(delta: float) -> void:
 		var t: float = clamp((now - _aim_started_at) / CHARGE_TIME, 0.0, 1.0)
 		if _aim_arrow.has_method("_set_length"):
 			_aim_arrow._set_length(48.0 + 48.0 * t)
+	# Update aura/visual after state updates
+	_update_vulnerability_visual()
+	queue_redraw() # redraw aura if needed (Godot 4)
 
 func _unhandled_input(event: InputEvent) -> void:
 	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
@@ -476,6 +480,23 @@ func _update_base_state() -> void:
 
 	var was_at_base := at_base
 	at_base = (global_position.distance_to(base_center) <= base_radius + 0.5)
+	# Vulnerable when we've thrown (slipper outside) and are outside base
+	is_vulnerable = (can_leave_base and not at_base)
 	# If we just re-entered base and no slipper is outside, re-lock and emit
 	if at_base and not was_at_base and not can_leave_base:
 		returned_to_base.emit()
+
+func _update_vulnerability_visual() -> void:
+	# Simple red tint when vulnerable, normal otherwise
+	var anim: AnimatedSprite2D = $AnimatedSprite2D
+	if is_vulnerable:
+		anim.modulate = Color(1.0, 0.5, 0.5)
+	else:
+		anim.modulate = Color(1, 1, 1)
+
+func _draw() -> void:
+	# Draw a soft red aura when vulnerable
+	if is_vulnerable:
+		var radius := 22.0
+		var color := Color(1, 0, 0, 0.28)
+		draw_circle(Vector2.ZERO, radius, color)
