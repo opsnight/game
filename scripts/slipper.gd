@@ -3,7 +3,7 @@ extends RigidBody2D
 signal picked_up
 
 # Throw parameters (top-down, so no gravity)
-@export var speed: float = 300.0
+@export var speed: float = 800.0
 @export var linear_damp_when_free: float = 4.0
 @export var angular_spin: float = 6.0
 @export var pickup_radius: float = 24.0

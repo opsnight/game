@@ -59,6 +59,80 @@ func _ready() -> void:
 			if "slippers_available" in the_player and "MAX_SLIPPERS" in the_player:
 				hud.set_ammo(the_player.slippers_available, the_player.MAX_SLIPPERS)
 
+	# Connect interactions between Player 1 and Player 2
+	var p1 := get_node_or_null("TileMap/player")
+	var p2 := get_node_or_null("TileMap/player 2")
+	if p1 and p2:
+		# Player 1 -> Player 2: chase toggles
+		if p1.has_signal("slipper_thrown") and p2.has_method("on_player_slipper_thrown"):
+			p1.connect("slipper_thrown", Callable(p2, "on_player_slipper_thrown"))
+		if p1.has_signal("returned_to_base") and p2.has_method("on_player_returned_to_base"):
+			p1.connect("returned_to_base", Callable(p2, "on_player_returned_to_base"))
+		# Player 2 -> World: caught player -> swap places
+		if p2.has_signal("caught_player"):
+			p2.connect("caught_player", Callable(self, "_on_player2_caught_player"))
+
+func _on_player2_caught_player() -> void:
+	var p1 := get_node_or_null("TileMap/player")
+	var p2 := get_node_or_null("TileMap/player 2")
+	if not (p1 and p2 and p1 is Node2D and p2 is Node2D):
+		return
+	# Show Try Again confirmation instead of swapping roles
+	var layer := CanvasLayer.new()
+	layer.layer = 100
+	add_child(layer)
+	var dialog := ConfirmationDialog.new()
+	dialog.title = "Caught!"
+	dialog.dialog_text = "Player 1 has been caught. Try again?"
+	dialog.min_size = Vector2(360, 120)
+	layer.add_child(dialog)
+	dialog.popup_centered()
+	var confirmed := false
+	dialog.confirmed.connect(func(): confirmed = true)
+	await dialog.tree_exited # wait until user closes dialog (OK or Cancel)
+	layer.queue_free()
+	# If confirmed, reset the round state
+	if confirmed:
+		_reset_round()
+	# In any case, stop chase
+	if "can_chase_player" in p2:
+		p2.can_chase_player = false
+
+func _reset_round() -> void:
+	var p1 := get_node_or_null("TileMap/player")
+	var p2 := get_node_or_null("TileMap/player 2")
+	# Reset Player 1 to base center, refill slippers, clear aura
+	if p1 and p1 is Node:
+		if "base_center" in p1 and p1 is Node2D:
+			(p1 as Node2D).global_position = p1.base_center
+		if "slippers_available" in p1 and "MAX_SLIPPERS" in p1:
+			p1.slippers_available = p1.MAX_SLIPPERS
+			if p1.has_signal("ammo_changed"):
+				p1.ammo_changed.emit(p1.slippers_available, p1.MAX_SLIPPERS)
+		if p1.has_method("_stop_aim"):
+			p1._stop_aim()
+		if "is_vulnerable" in p1:
+			p1.is_vulnerable = false
+		if p1.has_node("AnimatedSprite2D"):
+			p1.get_node("AnimatedSprite2D").modulate = Color(1,1,1)
+	# Clear all slippers in the scene
+	for n in get_tree().get_nodes_in_group("slipper"):
+		if n is Node:
+			n.queue_free()
+	# Reset can to original position if helper exists
+	var can := _find_any_can()
+	if can:
+		if can.has_method("end_carry"):
+			can.end_carry()
+		if can.has_method("reset_to_original"):
+			can.reset_to_original()
+	# Ensure Player 2 stops attack/chase state
+	if p2:
+		if "can_chase_player" in p2:
+			p2.can_chase_player = false
+		if "is_attacking" in p2:
+			p2.is_attacking = false
+
 func _compute_default_spawn() -> Vector2:
 	# Place the player roughly at the center of the used TileMap area
 	if tilemap:
@@ -90,7 +164,7 @@ func _create_bounds_walls() -> void:
 	var top := float(used_rect.position.y * ts.y)
 	var right := float((used_rect.position.x + used_rect.size.x) * ts.x)
 	var bottom := float((used_rect.position.y + used_rect.size.y) * ts.y)
-	var inset := 8.0
+	var inset := 16.0
 	left += inset; top += inset; right -= inset; bottom -= inset
 
 	var walls := StaticBody2D.new()
@@ -105,15 +179,15 @@ func _create_bounds_walls() -> void:
 		cs.position = center
 		walls.add_child(cs)
 
-	var thickness := 16.0
-	# Top
-	add_rect.call(Vector2((left + right) * 0.5, top - thickness * 0.5), Vector2(right - left, thickness))
+	var thickness := 24.0
+		# Top (place wall just inside the playable area)
+	add_rect.call(Vector2((left + right) * 0.5, top + thickness * 0.5), Vector2(right - left, thickness))
 	# Bottom
-	add_rect.call(Vector2((left + right) * 0.5, bottom + thickness * 0.5), Vector2(right - left, thickness))
+	add_rect.call(Vector2((left + right) * 0.5, bottom - thickness * 0.5), Vector2(right - left, thickness))
 	# Left
-	add_rect.call(Vector2(left - thickness * 0.5, (top + bottom) * 0.5), Vector2(thickness, bottom - top))
+	add_rect.call(Vector2(left + thickness * 0.5, (top + bottom) * 0.5), Vector2(thickness, bottom - top))
 	# Right
-	add_rect.call(Vector2(right + thickness * 0.5, (top + bottom) * 0.5), Vector2(thickness, bottom - top))
+	add_rect.call(Vector2(right - thickness * 0.5, (top + bottom) * 0.5), Vector2(thickness, bottom - top))
 
 func _create_or_place_can() -> void:
 	if not can_scene:

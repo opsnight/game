@@ -305,7 +305,7 @@ size = Vector2(16, 205)
 size = Vector2(8, 124)
 
 [node name="World" type="Node2D"]
-position = Vector2(-2, 2)
+position = Vector2(-7, 17)
 script = ExtResource("4_world")
 
 [node name="TileMap" type="TileMap" parent="."]
