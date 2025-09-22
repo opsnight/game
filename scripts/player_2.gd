@@ -12,29 +12,42 @@ var current_dir: String = "down"
 var is_attacking: bool = false
 @export var catch_radius: float = 28.0
 
+# References and state
+var can_node: Node2D = null
+var player1: Node = null
+var can_chase_player: bool = false
+var carry_pickup_radius: float = 36.0
+var carry_drop_radius: float = 24.0
+
 func _ready() -> void:
 	$AnimatedSprite2D.play("f_idle")
+	# Cache references
+	player1 = get_tree().current_scene.find_child("player", true, false)
+	var found_can := get_tree().current_scene.find_child("Can", true, false)
+	if found_can and found_can is Node2D:
+		can_node = found_can
 
 func _physics_process(delta: float) -> void:
 	player_movement(delta)
-	if is_attacking:
+	# Interactions: catch and can handling
+	if can_chase_player:
 		_try_catch()
+	_handle_can_interactions()
 
 func _unhandled_input(event: InputEvent) -> void:
-	if event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
-		_start_attack()
-	elif event.is_action_pressed("attack"):
-		_start_attack()
+	pass
 
 func player_movement(delta: float) -> void:
+	# Arrow keys only using physical key codes
+	# Left(4194319) Right(4194321) Up(4194320) Down(4194322)
 	var input_dir: Vector2 = Vector2.ZERO
-	if Input.is_action_pressed("right"):
+	if Input.is_physical_key_pressed(4194321): # Right Arrow
 		input_dir.x += 1
-	if Input.is_action_pressed("left"):
+	if Input.is_physical_key_pressed(4194319): # Left Arrow
 		input_dir.x -= 1
-	if Input.is_action_pressed("down"):
+	if Input.is_physical_key_pressed(4194322): # Down Arrow
 		input_dir.y += 1
-	if Input.is_action_pressed("up"):
+	if Input.is_physical_key_pressed(4194320): # Up Arrow
 		input_dir.y -= 1
 
 	if input_dir.length() > 0.0:
@@ -87,37 +100,17 @@ func _play_anim(movement: int, is_running: bool) -> void:
 			return
 
 func _start_attack() -> void:
-	if is_attacking:
-		return
-	is_attacking = true
-	var anim: AnimatedSprite2D = $AnimatedSprite2D
-	var base: String = _base_from_dir(current_dir)
-	var flip_left: bool = current_dir in ["left", "down_left", "up_left"]
-	anim.flip_h = flip_left
-	var name: String = base + "_attack" # expects f_attack or b_attack
-	var played: bool = false
-	if anim.sprite_frames and anim.sprite_frames.has_animation(name):
-		anim.play(name)
-		played = true
-	else:
-		# Fallback to idle if attack anim not present
-		anim.play(base + "_idle")
-	# Compute attack window from frames if possible
-	var lock_time: float = 0.35
-	if played:
-		var fps: float = anim.sprite_frames.get_animation_speed(name)
-		var frames_count: int = anim.sprite_frames.get_frame_count(name)
-		var loops: bool = anim.sprite_frames.get_animation_loop(name)
-		if fps > 0 and frames_count > 0 and not loops:
-			lock_time = float(frames_count) / fps
-	await get_tree().create_timer(lock_time).timeout
-	is_attacking = false
+	pass
 
 func _try_catch() -> void:
 	# Find main player and check proximity
-	var player: Node = get_tree().current_scene.find_child("player", true, false)
+	var player: Node = player1 if player1 != null else get_tree().current_scene.find_child("player", true, false)
 	if player and player is CharacterBody2D:
-		if global_position.distance_to(player.global_position) <= catch_radius:
+		# Only allow catch if Player 1 is not at base if that property exists
+		var eligible := true
+		if "at_base" in player:
+			eligible = not player.at_base
+		if eligible and global_position.distance_to(player.global_position) <= catch_radius:
 			emit_signal("caught_player")
 			if player.has_method("play_hurt_from"):
 				player.play_hurt_from(global_position)
@@ -144,3 +137,37 @@ func _dir8_from_vector(v: Vector2) -> String:
 		6: return "up"
 		7: return "up_right"
 		_: return "down"
+
+# Player1 signal handlers to control chase eligibility
+func on_player_slipper_thrown(_pos: Vector2) -> void:
+	can_chase_player = true
+
+func on_player_returned_to_base() -> void:
+	can_chase_player = false
+
+func _handle_can_interactions() -> void:
+	if can_node == null:
+		var found := get_tree().current_scene.find_child("Can", true, false)
+		if found and found is Node2D:
+			can_node = found
+	if can_node == null:
+		return
+	# Interact only if the node has our helper API
+	if can_node and can_node.has_method("is_knocked_down") and can_node.has_method("begin_carry"):
+		# Auto-pickup if knocked down and close enough and not already being carried
+		var knocked: bool = bool(can_node.call("is_knocked_down"))
+		var carried: bool = bool(can_node.get("is_being_carried"))
+		if knocked and not carried and global_position.distance_to(can_node.global_position) <= carry_pickup_radius:
+			can_node.begin_carry(self)
+		# If carrying, auto-drop/reset when near original spot
+		var orig_val = can_node.get("original_position")
+		var orig: Vector2
+		if not (orig_val is Vector2):
+			return
+		orig = orig_val
+		if carried:
+			if global_position.distance_to(orig) <= carry_drop_radius:
+				if can_node.has_method("end_carry"):
+					can_node.end_carry()
+				if can_node.has_method("reset_to_original"):
+					can_node.reset_to_original()

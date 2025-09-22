@@ -59,6 +59,32 @@ func _ready() -> void:
 			if "slippers_available" in the_player and "MAX_SLIPPERS" in the_player:
 				hud.set_ammo(the_player.slippers_available, the_player.MAX_SLIPPERS)
 
+	# Connect interactions between Player 1 and Player 2
+	var p1 := get_node_or_null("TileMap/player")
+	var p2 := get_node_or_null("TileMap/player 2")
+	if p1 and p2:
+		# Player 1 -> Player 2: chase toggles
+		if p1.has_signal("slipper_thrown") and p2.has_method("on_player_slipper_thrown"):
+			p1.connect("slipper_thrown", Callable(p2, "on_player_slipper_thrown"))
+		if p1.has_signal("returned_to_base") and p2.has_method("on_player_returned_to_base"):
+			p1.connect("returned_to_base", Callable(p2, "on_player_returned_to_base"))
+		# Player 2 -> World: caught player -> swap places
+		if p2.has_signal("caught_player"):
+			p2.connect("caught_player", Callable(self, "_on_player2_caught_player"))
+
+func _on_player2_caught_player() -> void:
+	var p1 := get_node_or_null("TileMap/player")
+	var p2 := get_node_or_null("TileMap/player 2")
+	if p1 and p2 and p1 is Node2D and p2 is Node2D:
+		var pos1 := (p1 as Node2D).global_position
+		var pos2 := (p2 as Node2D).global_position
+		(p1 as Node2D).global_position = pos2
+		(p2 as Node2D).global_position = pos1
+		# Reset Player 1 base center to new spot (property exists in player.gd)
+		p1.base_center = (p1 as Node2D).global_position
+		# Stop chase immediately after swap (property exists in player_2.gd)
+		p2.can_chase_player = false
+
 func _compute_default_spawn() -> Vector2:
 	# Place the player roughly at the center of the used TileMap area
 	if tilemap:

@@ -1,6 +1,7 @@
 extends CharacterBody2D
-
 signal ammo_changed(count: int, max_count: int)
+signal slipper_thrown(global_pos: Vector2)
+signal returned_to_base()
 
 const SPEED = 100.0
 const ACCELERATION = 1500.0
@@ -24,14 +25,24 @@ const MIN_SPEED_MULT := 0.7
 const MAX_SPEED_MULT := 2.0
 var _aim_started_at: float = 0.0
 
+# Base zone (green line) logic
+@export var base_radius: float = 50.0
+var base_center: Vector2
+var can_leave_base: bool = false
+var at_base: bool = true
+
 func _ready() -> void:
 	$AnimatedSprite2D.play("front_idle")
 	_setup_camera_limits()
 	# tell UI initial ammo
 	ammo_changed.emit(slippers_available, MAX_SLIPPERS)
+	# initialize base center at spawn
+	base_center = global_position
+	at_base = true
 
 
 func _physics_process(delta: float) -> void:
+	_update_base_state()
 	player_movement(delta)
 	# Update aim arrow while aiming
 	if is_aiming and _aim_arrow != null:
@@ -70,24 +81,35 @@ func _unhandled_input(event: InputEvent) -> void:
 		_recall_nearest_slipper()
 
 func player_movement(delta):
-	# Get input direction
+	# WASD-only controls for Player 1 using physical key codes
+	# W(87) A(65) S(83) D(68)
 	var input_dir = Vector2()
-	
-	if Input.is_action_pressed("right"):
-		input_dir.x += 1
-	if Input.is_action_pressed("left"):
-		input_dir.x -= 1
-	if Input.is_action_pressed("down"):
-		input_dir.y += 1
-	if Input.is_action_pressed("up"):
+	if Input.is_physical_key_pressed(87): # W
 		input_dir.y -= 1
+	if Input.is_physical_key_pressed(83): # S
+		input_dir.y += 1
+	if Input.is_physical_key_pressed(65): # A
+		input_dir.x -= 1
+	if Input.is_physical_key_pressed(68): # D
+		input_dir.x += 1
 	
 	# Normalize diagonal movement so it's not faster
 	if input_dir.length() > 0:
 		input_dir = input_dir.normalized()
 		_last_dir_vec = input_dir
 
-		# Sprint / Run handling
+		# Base boundary clamp: if not allowed to leave base, remove outward component at the edge
+		if not can_leave_base:
+			var to_out := (global_position - base_center)
+			var dist := to_out.length()
+			if dist > 0.0:
+				var outward := to_out / dist
+				var outward_comp := input_dir.dot(outward)
+				# If at or beyond the boundary and trying to move outward, cancel that component
+				if dist >= base_radius - 1.0 and outward_comp > 0.0:
+					input_dir = (input_dir - outward * outward_comp).normalized() if (input_dir - outward * outward_comp).length() > 0.001 else Vector2.ZERO
+
+		# Sprint / Run handling (use Shift Right physical if present, otherwise default to false)
 		var is_running := Input.is_action_pressed("run")
 		var target_speed := SPEED * (RUN_MULTIPLIER if is_running else 1.0)
 		var accel := ACCELERATION * (RUN_ACCEL_MULTIPLIER if is_running else 1.0)
@@ -97,10 +119,8 @@ func player_movement(delta):
 
 		# Speed up animations slightly when running
 		$AnimatedSprite2D.speed_scale = 1.2 if is_running else 1.0
-		
 		# Update current direction for animations (8 directions)
 		current_dir = _dir8_from_vector(input_dir)
-		
 		play_anim(1, is_running)
 	else:
 		# Apply friction when no input
@@ -249,6 +269,8 @@ func _throw_slipper() -> void:
 				s.connect("picked_up", Callable(self, "_on_slipper_picked"))
 			slippers_available = max(0, slippers_available - 1)
 			ammo_changed.emit(slippers_available, MAX_SLIPPERS)
+			# Notify that we threw a slipper
+			slipper_thrown.emit(global_position)
 	# Play throw animation with lock and safe fallbacks
 	is_throwing = true
 	var candidates: Array[String] = [base + "_throw"]
@@ -439,3 +461,21 @@ func _setup_camera_limits() -> void:
 	cam.limit_bottom = bottom
 	cam.enabled = true
 	cam.make_current()
+
+# Base-state helpers
+func _update_base_state() -> void:
+	# Determine if any active slipper is currently outside the base radius
+	var slipper_outside := false
+	for n in get_tree().get_nodes_in_group("slipper"):
+		if n is Node2D and n.is_inside_tree():
+			var d: float = (n.global_position - base_center).length()
+			if d > base_radius + 1.0:
+				slipper_outside = true
+				break
+	can_leave_base = slipper_outside
+
+	var was_at_base := at_base
+	at_base = (global_position.distance_to(base_center) <= base_radius + 0.5)
+	# If we just re-entered base and no slipper is outside, re-lock and emit
+	if at_base and not was_at_base and not can_leave_base:
+		returned_to_base.emit()
