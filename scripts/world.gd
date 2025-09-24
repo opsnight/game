@@ -4,38 +4,57 @@ extends Node2D
 @export var player_scene: PackedScene = preload("res://scenes/player.tscn")
 @export var spawn_position: Vector2 = Vector2.ZERO
 @export var hud_scene: PackedScene = preload("res://scenes/hud.tscn")
+@export var defender_hud_scene: PackedScene = preload("res://scenes/defender_hud.tscn")
 @export var can_scene: PackedScene = preload("res://scenes/can.tscn")
 @export var can_spawn_position: Vector2 = Vector2.ZERO
 @export var ui_manager_scene: PackedScene = preload("res://scenes/ui_manager.tscn")
 @export var network_player_scene: PackedScene = preload("res://scenes/networked_player.tscn")
 
+var _hud: Node = null
+var _hud_connected: bool = false
+var _attacker_spawn_global: Vector2 = Vector2.ZERO
+var _defender_spawn_global: Vector2 = Vector2.ZERO
+var _round_can_hit: bool = false
+var _attackers_used: Dictionary = {}
+
 func _ready() -> void:
+	# If game is set to SINGLEPLAYER, ensure no multiplayer peer is active (clear leftovers)
+	if Engine.has_singleton("GameConfig"):
+		if GameConfig.mode == GameConfig.Mode.SINGLEPLAYER and multiplayer.multiplayer_peer != null:
+			print("[World] Clearing leftover multiplayer peer for SINGLEPLAYER mode")
+			multiplayer.multiplayer_peer = null
+	
+	# Debug: Print current mode
+	var is_net = _is_networked()
+	print("[World] Starting world - Networked: ", is_net, " | Peer: ", multiplayer.multiplayer_peer)
 	# Ensure the TileMap is in the expected group for the Player camera limits
 	if tilemap and not tilemap.is_in_group("world_tilemap"):
 		tilemap.add_to_group("world_tilemap")
 
-	# If a player already exists in the scene (e.g., instanced in the .tscn), don't spawn another
-	var existing_player := get_node_or_null("TileMap/player")
-	if existing_player == null:
-		# Instance and place the player
-		if player_scene:
-			var player := player_scene.instantiate()
-			player.name = "player"
-			# Add under the TileMap to match your scene layout
-			if tilemap:
-				tilemap.add_child(player)
-			else:
-				add_child(player)
+	# Only instantiate offline Player 1 when NOT networked to avoid duplicates in LAN
+	if not _is_networked():
+		# If a player already exists in the scene (e.g., instanced in the .tscn), don't spawn another
+		var existing_player := get_node_or_null("TileMap/player")
+		if existing_player == null:
+			# Instance and place the player
+			if player_scene:
+				var player := player_scene.instantiate()
+				player.name = "player"
+				# Add under the TileMap to match your scene layout
+				if tilemap:
+					tilemap.add_child(player)
+				else:
+					add_child(player)
 
-			var spawn := spawn_position
-			if spawn == Vector2.ZERO:
-				spawn = _compute_default_spawn()
+				var spawn := spawn_position
+				if spawn == Vector2.ZERO:
+					spawn = _compute_default_spawn()
 
-			# Convert to global assuming spawn is in the TileMap local space
-			if tilemap:
-				player.global_position = tilemap.to_global(spawn)
-			else:
-				player.global_position = spawn
+				# Convert to global assuming spawn is in the TileMap local space
+				if tilemap:
+					player.global_position = tilemap.to_global(spawn)
+				else:
+					player.global_position = spawn
 
 	# Build perimeter walls from the TileMap bounds
 	_create_bounds_walls()
@@ -44,8 +63,8 @@ func _ready() -> void:
 	_create_or_place_can()
 	_dedupe_cans_keep_rightmost()
 
-	# Always 2 human players: remove any Defender AI if present
-	if not _is_networked():
+	# LAN must have NO AI; remove any Defender AI if present when networked
+	if _is_networked():
 		var existing_defender = get_tree().get_first_node_in_group("defender")
 		if existing_defender:
 			existing_defender.queue_free()
@@ -61,37 +80,48 @@ func _ready() -> void:
 	if not _is_networked():
 		_make_offline_camera_current()
 		_ensure_offline_players_visible()
-	else:
-		# In LAN mode, ensure Defender AI exists for gameplay
-		_ensure_defender_exists()
 
-	# Ensure HUD exists and is connected to the player ammo signal
-	var the_player: Node = get_node_or_null("TileMap/player")
-	if the_player == null:
-		# fallback: search tree
-		the_player = get_tree().current_scene.find_child("player", true, false)
-	if the_player and hud_scene:
+	# Ensure HUD exists; connect to offline or network local player when available
+	if _hud == null:
 		var layer := CanvasLayer.new()
 		layer.layer = 5
 		add_child(layer)
-		var hud := hud_scene.instantiate()
-		layer.add_child(hud)
-		if the_player.has_signal("ammo_changed") and hud.has_method("set_ammo"):
-			the_player.connect("ammo_changed", Callable(hud, "set_ammo"))
-			# Initialize HUD with current counts if available
-			if "slippers_available" in the_player and "MAX_SLIPPERS" in the_player:
-				hud.set_ammo(the_player.slippers_available, the_player.MAX_SLIPPERS)
+		# Create appropriate HUD based on mode and role
+		_hud = _create_appropriate_hud()
+		layer.add_child(_hud)
+
+	if not _is_networked():
+		var the_player: Node = get_node_or_null("TileMap/player")
+		if the_player == null:
+			# fallback: search tree
+			the_player = get_tree().current_scene.find_child("player", true, false)
+		if the_player:
+			_connect_hud_to_player(the_player)
+	else:
+		# Try to connect to local networked player now; if not found, listen for it
+		var np := _find_local_networked_player()
+		if np:
+			_connect_hud_to_player(np)
+		else:
+			get_tree().node_added.connect(_on_node_added_connect_hud)
 
 
 func _is_networked() -> bool:
 	return multiplayer != null and multiplayer.multiplayer_peer != null
 
 func _setup_networked_play() -> void:
+	print("[World] Setting up networked play - removing offline players")
 	# Remove any offline players from the scene
 	var p1 := get_node_or_null("TileMap/player")
-	if p1: p1.queue_free()
+	if p1 and p1 is Node2D:
+		print("[World] Removing Player 1 for networked mode")
+		_attacker_spawn_global = (p1 as Node2D).global_position
+		p1.queue_free()
 	var p2 := get_node_or_null("TileMap/player 2")
-	if p2: p2.queue_free()
+	if p2 and p2 is Node2D:
+		print("[World] Removing Player 2 for networked mode")
+		_defender_spawn_global = (p2 as Node2D).global_position
+		p2.queue_free()
 
 	# Create a MultiplayerSpawner that will own spawned players
 	var spawner: MultiplayerSpawner = get_node_or_null("NetworkSpawner")
@@ -101,9 +131,13 @@ func _setup_networked_play() -> void:
 		spawner.spawn_path = NodePath(".")
 		spawner.spawn_limit = 10
 		add_child(spawner)
-		# Register the networked player scene for replication
-		if ResourceLoader.exists("res://scenes/networked_player.tscn"):
-			spawner.add_spawnable_scene("res://scenes/networked_player.tscn")
+	# Register spawnable scenes (safe to call multiple times)
+	if ResourceLoader.exists("res://scenes/networked_player.tscn"):
+		spawner.add_spawnable_scene("res://scenes/networked_player.tscn")
+	if ResourceLoader.exists("res://scenes/slipper.tscn"):
+		spawner.add_spawnable_scene("res://scenes/slipper.tscn")
+	if ResourceLoader.exists("res://scenes/can.tscn"):
+		spawner.add_spawnable_scene("res://scenes/can.tscn")
 
 	# Connect multiplayer signals for dynamic joins/leaves
 	if not multiplayer.peer_connected.is_connected(self._on_peer_connected):
@@ -113,13 +147,164 @@ func _setup_networked_play() -> void:
 	if not multiplayer.server_disconnected.is_connected(self._on_server_disconnected):
 		multiplayer.server_disconnected.connect(_on_server_disconnected)
 
-	# Only the server spawns players
+	# Only the server spawns players and the can, but wait for roles to be set first
 	if multiplayer.is_server():
-		# Spawn server-controlled player (peer 1)
-		_spawn_network_player(1, 0)
-		# Spawn for already-connected clients
-		for pid in multiplayer.get_peers():
-			_spawn_network_player(pid, pid % 8)
+		print("[World] Server waiting for role assignment before spawning players")
+		# Roles should already be set by multiplayer_lobby.gd before scene change
+		call_deferred("_spawn_all_network_players")
+		call_deferred("_spawn_network_can")
+
+func _spawn_all_network_players() -> void:
+	print("[World] Spawning all network players with roles")
+	if not multiplayer.is_server():
+		return
+	
+	# Get all peer IDs (server + clients)
+	var all_peers: Array = [1]  # Server is always peer 1
+	for pid in multiplayer.get_peers():
+		all_peers.append(pid)
+	
+	print("[World] All peers to spawn: ", all_peers)
+	
+	# Get roles from GameConfig
+	var roles: Dictionary = {}
+	if Engine.has_singleton("GameConfig"):
+		roles = GameConfig.roles if "roles" in GameConfig else {}
+	
+	print("[World] Roles assigned: ", roles)
+
+	# Build attacker-local indices so attackers spread neatly at the attacker spawn
+	var attackers: Array = []
+	for pid in all_peers:
+		if String(roles.get(pid, "thrower")).to_lower() == "thrower":
+			attackers.append(pid)
+	attackers.sort()
+	var attacker_index_by_peer: Dictionary = {}
+	for j in range(attackers.size()):
+		attacker_index_by_peer[attackers[j]] = j
+
+	# Spawn each player with their assigned role (avoid duplicates)
+	for i in range(all_peers.size()):
+		var peer_id = all_peers[i]
+		if get_node_or_null("Player_%s" % peer_id) != null:
+			print("[World] Skipping spawn for peer ", peer_id, " (already exists)")
+			continue
+		var role: String = String(roles.get(peer_id, "thrower"))  # Default to thrower
+		var atk_idx: int = int(attacker_index_by_peer.get(peer_id, -1))
+		print("[World] Spawning peer ", peer_id, " as ", role, " atk_idx=", atk_idx)
+		_spawn_network_player_with_role(peer_id, atk_idx, role)
+
+	# Start round state (server only)
+	_round_begin_state()
+
+func _spawn_network_player_with_role(peer_id: int, index: int, role: String) -> void:
+	var spawner: MultiplayerSpawner = get_node_or_null("NetworkSpawner")
+	if spawner == null or network_player_scene == null:
+		return
+
+	# Always instance locally and add to scene, then replicate via spawner
+	var player_inst: Node2D = network_player_scene.instantiate()
+	player_inst.name = "Player_%s" % peer_id
+	
+	# Set authority on the player and its synchronizer before first sync
+	player_inst.set_multiplayer_authority(peer_id)
+	var sync := player_inst.get_node_or_null("MultiplayerSynchronizer")
+	if sync:
+		sync.set_multiplayer_authority(peer_id)
+	
+	# Set role BEFORE adding to scene
+	if "role" in player_inst:
+		player_inst.set("role", role)
+		print("[World] Set role ", role, " for player ", peer_id)
+	
+	# Choose spawn by role (attacker from P1 spot, defender from P2 spot)
+	var spawn_pos := _compute_network_spawn(index)
+	if role.to_lower() == "defender" and _defender_spawn_global != Vector2.ZERO:
+		spawn_pos = _defender_spawn_global
+	elif role.to_lower() == "thrower" and _attacker_spawn_global != Vector2.ZERO:
+		spawn_pos = _attacker_spawn_global
+	# Fallback if cached points are missing: place by thirds of playfield
+	if spawn_pos == Vector2.ZERO:
+		spawn_pos = _fallback_spawn_by_role(role)
+	# Spread attackers around attacker spawn based on their attacker-local index
+	if role.to_lower() == "thrower" and index >= 0:
+		spawn_pos += _attacker_offset_for(index)
+	print("[World] Spawning role ", role, " at ", spawn_pos)
+	
+	# Add to the world before spawning for network replication
+	add_child(player_inst)
+	player_inst.global_position = spawn_pos
+	# Initialize sync_position so remote sides don't lerp to (0,0)
+	if "sync_position" in player_inst:
+		player_inst.set("sync_position", spawn_pos)
+	
+	# Ask spawner to replicate this node to all clients
+	spawner.spawn(player_inst)
+	# RPC fallback: also tell all clients to spawn this player locally in case spawner misses
+	rpc("_rpc_spawn_remote_player", peer_id, role, spawn_pos)
+	# Ensure the newly spawned owner's camera becomes current on their client
+	rpc_id(peer_id, "_rpc_focus_local_camera")
+	# Host also ensures its own camera is focused when spawning its player
+	if peer_id == multiplayer.get_unique_id():
+		var cam_host: Camera2D = player_inst.get_node_or_null("Camera2D")
+		if cam_host:
+			cam_host.enabled = true
+			cam_host.make_current()
+
+@rpc("any_peer", "call_local", "reliable")
+func _rpc_spawn_remote_player(peer_id: int, role: String, spawn_pos: Vector2) -> void:
+	# Only clients perform this; the server already has the node
+	if multiplayer.is_server():
+		return
+	if network_player_scene == null:
+		return
+	if get_node_or_null("Player_%s" % peer_id) != null:
+		return
+	var player_inst: Node2D = network_player_scene.instantiate()
+	player_inst.name = "Player_%s" % peer_id
+	add_child(player_inst)
+	player_inst.global_position = spawn_pos
+	if "sync_position" in player_inst:
+		player_inst.set("sync_position", spawn_pos)
+	if "role" in player_inst:
+		player_inst.set("role", role)
+	# Preserve authority so the local client can control their own player
+	player_inst.set_multiplayer_authority(peer_id)
+	var sync := player_inst.get_node_or_null("MultiplayerSynchronizer")
+	if sync:
+		sync.set_multiplayer_authority(peer_id)
+	# Ensure camera activates for the local player's instance
+	if peer_id == multiplayer.get_unique_id():
+		var cam: Camera2D = player_inst.get_node_or_null("Camera2D")
+		if cam:
+			cam.enabled = true
+			cam.make_current()
+
+func _fallback_spawn_by_role(role: String) -> Vector2:
+	# Compute left/right thirds of the used TileMap area
+	var used_local := _compute_default_spawn() # center by default
+	if tilemap:
+		var used_rect: Rect2i = tilemap.get_used_rect()
+		var ts: Vector2i = tilemap.tile_set.tile_size
+		var left_x := float(used_rect.position.x * ts.x)
+		var right_x := float((used_rect.position.x + used_rect.size.x) * ts.x)
+		var mid_y := float((used_rect.position.y + used_rect.size.y / 2.0) * ts.y)
+		var pos_local := Vector2(left_x + (right_x - left_x) * (1.0/3.0), mid_y)
+		if role.to_lower() == "defender":
+			pos_local = Vector2(left_x + (right_x - left_x) * (2.0/3.0), mid_y)
+		return tilemap.to_global(pos_local)
+	return used_local
+
+@rpc("any_peer", "call_local", "reliable")
+func _rpc_focus_local_camera() -> void:
+	# Runs on the client: focus the local player's camera
+	var local_name := "Player_%s" % multiplayer.get_unique_id()
+	var p := get_node_or_null(local_name)
+	if p:
+		var cam: Camera2D = p.get_node_or_null("Camera2D")
+		if cam:
+			cam.enabled = true
+			cam.make_current()
 
 func _make_offline_camera_current() -> void:
 	# Prefer Player 1's camera
@@ -131,8 +316,10 @@ func _make_offline_camera_current() -> void:
 		cam.make_current()
 
 func _ensure_offline_players_visible() -> void:
+	print("[World] Ensuring offline players are visible...")
 	var p1: Node2D = get_node_or_null("TileMap/player")
 	if p1:
+		print("[World] Found Player 1, making visible")
 		p1.visible = true
 		p1.z_as_relative = false
 		p1.z_index = 200
@@ -140,8 +327,12 @@ func _ensure_offline_players_visible() -> void:
 		if s1:
 			s1.visible = true
 			s1.z_index = 200
+	else:
+		print("[World] Player 1 not found!")
+	
 	var p2: Node2D = get_node_or_null("TileMap/player 2")
 	if p2:
+		print("[World] Found Player 2, making visible")
 		p2.visible = true
 		p2.z_as_relative = false
 		p2.z_index = 200
@@ -149,6 +340,8 @@ func _ensure_offline_players_visible() -> void:
 		if s2:
 			s2.visible = true
 			s2.z_index = 200
+	else:
+		print("[World] Player 2 not found!")
 
 func _ensure_defender_exists() -> void:
 	# Instance Defender AI if not present
@@ -161,7 +354,7 @@ func _ensure_defender_exists() -> void:
 	var ps := load(path)
 	if ps and ps is PackedScene:
 		var inst: Node2D = ps.instantiate()
-		var parent_node: Node = tilemap if tilemap != null else self
+		var parent_node: Node = tilemap if tilemap != null else (self as Node)
 		parent_node.add_child(inst)
 		# Place defender near the can spawn for now
 		var spawn: Vector2 = _compute_default_can_spawn()
@@ -173,21 +366,36 @@ func _ensure_defender_exists() -> void:
 			(inst as CanvasItem).z_as_relative = false
 			(inst as CanvasItem).z_index = 180
 
-func _spawn_network_player(peer_id: int, index: int) -> void:
-	var spawner: MultiplayerSpawner = get_node_or_null("NetworkSpawner")
-	if spawner == null or network_player_scene == null:
-		return
-	var player_inst: Node2D = network_player_scene.instantiate()
-	player_inst.name = "Player_%s" % peer_id
-	# CRITICAL: set authority before spawning/adding
-	player_inst.set_multiplayer_authority(peer_id)
-	var sync := player_inst.get_node_or_null("MultiplayerSynchronizer")
-	if sync:
-		sync.set_multiplayer_authority(peer_id)
-	player_inst.global_position = _compute_network_spawn(index)
-	# Spawn via MultiplayerSpawner so it replicates to clients
-	spawner.spawn(player_inst)
+func _on_peer_connected(peer_id: int) -> void:
+	print("[World] Peer connected: ", peer_id)
+	if multiplayer.is_server():
+		# Avoid duplicate spawn if already present (e.g., spawned during bulk spawn)
+		if get_node_or_null("Player_%s" % peer_id) != null:
+			print("[World] Peer ", peer_id, " already spawned; skipping")
+			return
+		# Get role for this peer
+		var role := "thrower"
+		if Engine.has_singleton("GameConfig"):
+			var roles := GameConfig.roles if "roles" in GameConfig else {}
+			if roles is Dictionary and roles.has(peer_id):
+				role = String(roles[peer_id])
+		
+		print("[World] Spawning new peer ", peer_id, " as ", role)
+		# Spawn the new player with their role
+		var index = multiplayer.get_peers().size()  # Use current peer count as index
+		_spawn_network_player_with_role(peer_id, index, role)
 
+func _on_peer_disconnected(peer_id: int) -> void:
+	print("[World] Peer disconnected: ", peer_id)
+	# Remove the disconnected player
+	var player_node = get_node_or_null("Player_%s" % peer_id)
+	if player_node:
+		player_node.queue_free()
+
+func _on_server_disconnected() -> void:
+	print("[World] Server disconnected")
+	# Return to main menu or lobby
+	get_tree().change_scene_to_file("res://scenes/main_menu.tscn")
 func _compute_network_spawn(index: int) -> Vector2:
 	var base_local := _compute_default_spawn()
 	var base_global := tilemap.to_global(base_local) if tilemap else base_local
@@ -197,19 +405,119 @@ func _compute_network_spawn(index: int) -> Vector2:
 		off = offsets[index]
 	return base_global + off
 
-func _on_peer_connected(pid: int) -> void:
-	if multiplayer.is_server():
-		_spawn_network_player(pid, pid % 8)
-
-func _on_peer_disconnected(pid: int) -> void:
-	var n := get_node_or_null("Player_%s" % pid)
-	if n: n.queue_free()
-
-func _on_server_disconnected() -> void:
-	# Client side: optionally return to menu
-	pass
+# Old functions removed - using new networking approach above
 
 
+@rpc("any_peer", "call_local", "reliable")
+func _rpc_spawn_slipper(pos: Vector2, dir: Vector2, power: float, owner_peer_id: int) -> void:
+	# Only the server performs the authoritative spawn
+	if not multiplayer.is_server():
+		return
+	var spawner: MultiplayerSpawner = get_node_or_null("NetworkSpawner")
+	if spawner == null:
+		return
+	# Instance and configure slipper then replicate via spawner
+	var slipper_scene: PackedScene = preload("res://scenes/slipper.tscn") if ResourceLoader.exists("res://scenes/slipper.tscn") else null
+	if slipper_scene == null:
+		return
+	var s: Node2D = slipper_scene.instantiate()
+	var parent_node: Node = tilemap if tilemap != null else (self as Node)
+	parent_node.add_child(s)
+	if s is Node2D:
+		(s as Node2D).global_position = pos
+	if s.has_method("init"):
+		s.init(dir, power)
+	# When slipper is picked up, restore the owner's ammo back to 1 (max stays 1)
+	if s.has_signal("picked_up"):
+		s.connect("picked_up", Callable(self, "_on_network_slipper_picked").bind(owner_peer_id))
+	# Replicate
+	spawner.spawn(s)
+	# Mark that this attacker has thrown (server authoritative round tracking)
+	_on_attacker_threw(owner_peer_id)
+
+func _on_network_slipper_picked(owner_peer_id: int) -> void:
+	# Server callback when a slipper is picked up: set owner's ammo back to 1
+	if not multiplayer.is_server():
+		return
+	var p := get_node_or_null("Player_%s" % owner_peer_id)
+	if p and p.has_method("_rpc_set_ammo"):
+		p.rpc_id(owner_peer_id, "_rpc_set_ammo", 1)
+
+func _on_node_added_connect_hud(n: Node) -> void:
+	if _hud_connected:
+		return
+	if n == null:
+		return
+	# We want the local networked player in LAN mode
+	if _is_networked():
+		var local_name := "Player_%s" % multiplayer.get_unique_id()
+		if n.name == local_name:
+			_connect_hud_to_player(n)
+			get_tree().node_added.disconnect(_on_node_added_connect_hud)
+
+func _connect_hud_to_player(p: Node) -> void:
+	if _hud == null or p == null or _hud_connected:
+		return
+	
+	# Get player role to determine HUD behavior
+	var player_role := "thrower"
+	if "role" in p:
+		player_role = String(p.get("role"))
+	
+	# Connect appropriate signals based on role
+	if player_role.to_lower() == "defender":
+		# Defender HUD - connect status updates if available
+		if _hud.has_method("set_status"):
+			_hud.call("set_status", "Defending")
+	else:
+		# Thrower HUD - connect ammo signals
+		if p.has_signal("ammo_changed") and _hud.has_method("set_ammo"):
+			p.connect("ammo_changed", Callable(_hud, "set_ammo"))
+			# Initialize HUD now
+			if "slippers_available" in p and "MAX_SLIPPERS" in p:
+				_hud.call("set_ammo", p.get("slippers_available"), p.get("MAX_SLIPPERS"))
+	
+	_hud_connected = true
+
+func _find_local_networked_player() -> Node:
+	var local_name := "Player_%s" % multiplayer.get_unique_id()
+	var n := get_node_or_null(local_name)
+	if n:
+		return n
+	return get_tree().current_scene.find_child(local_name, true, false)
+
+func _create_appropriate_hud() -> Node:
+	# Determine local player role to create correct HUD
+	var local_role := "thrower"
+	if _is_networked():
+		var local_peer_id := multiplayer.get_unique_id()
+		if Engine.has_singleton("GameConfig"):
+			var roles := GameConfig.roles if "roles" in GameConfig else {}
+			if roles is Dictionary and roles.has(local_peer_id):
+				local_role = String(roles[local_peer_id])
+	
+	# Create appropriate HUD based on role
+	if local_role.to_lower() == "defender" and defender_hud_scene:
+		return defender_hud_scene.instantiate()
+	elif hud_scene:
+		return hud_scene.instantiate()
+	else:
+		# Fallback: create a basic Control node
+		return Control.new()
+
+# _apply_roles_to_players removed - roles now set during spawn
+func _has_human_defender() -> bool:
+	# Checks GameConfig.roles for a connected peer assigned as defender
+	if Engine.has_singleton("GameConfig"):
+		var roles := GameConfig.roles if "roles" in GameConfig else {}
+		if roles is Dictionary:
+			for pid in roles.keys():
+				var role_val := String(roles[pid])
+				if role_val.to_lower() == "defender":
+					# Consider the server (ID 1) and any connected peers
+					if pid == 1 or multiplayer.get_peers().has(pid):
+						return true
+	return false
 func _create_game_systems() -> void:
 	# Create GameManager
 	var game_manager = Node.new()
@@ -218,7 +526,7 @@ func _create_game_systems() -> void:
 	var gm_script = preload("res://scripts/game_manager.gd")
 	game_manager.set_script(gm_script)
 	add_child(game_manager)
-	
+
 	# Create UI Manager
 	if ui_manager_scene:
 		var ui_manager = ui_manager_scene.instantiate()
@@ -229,6 +537,9 @@ func _create_game_systems() -> void:
 			ui_manager.set_game_manager(game_manager)
 		if game_manager.has_method("set_ui_manager"):
 			game_manager.set_ui_manager(ui_manager)
+		# Also listen for can hits to manage rounds
+		if game_manager.has_signal("can_hit"):
+			game_manager.connect("can_hit", Callable(self, "_on_can_hit"))
 
 func _reset_round() -> void:
 	var p1 := get_node_or_null("TileMap/player")
@@ -327,7 +638,7 @@ func _create_or_place_can() -> void:
 	var existing_can: Node = _find_any_can()
 	if existing_can == null:
 		var can: Node2D = can_scene.instantiate()
-		var parent_node: Node = tilemap if tilemap != null else self
+		var parent_node: Node = tilemap if tilemap != null else (self as Node)
 		parent_node.add_child(can)
 		can.name = "Can"
 		var spawn: Vector2 = can_spawn_position
@@ -365,3 +676,160 @@ func _dedupe_cans_keep_rightmost() -> void:
 	for c in cans:
 		if c != keep:
 			c.queue_free()
+
+# === LAN Round/Rotation helpers ===
+
+func _attacker_offset_for(idx: int) -> Vector2:
+	# Spread pattern for up to 5 attackers around the attacker spawn
+	var pattern := [
+		Vector2(0, 0),
+		Vector2(0, 48),
+		Vector2(0, -48),
+		Vector2(48, 24),
+		Vector2(48, -24)
+	]
+	if idx >= 0 and idx < pattern.size():
+		return pattern[idx]
+	return Vector2.ZERO
+
+func _round_begin_state() -> void:
+	# Reset per-round flags and give each attacker exactly 1 ammo
+	_round_can_hit = false
+	_attackers_used.clear()
+	if not multiplayer.is_server():
+		return
+	var roles: Dictionary = {}
+	if Engine.has_singleton("GameConfig"):
+		roles = GameConfig.roles if "roles" in GameConfig else {}
+	for pid in roles.keys():
+		if String(roles[pid]).to_lower() == "thrower":
+			var p := get_node_or_null("Player_%s" % int(pid))
+			if p and p.has_method("_rpc_set_ammo"):
+				p.rpc_id(int(pid), "_rpc_set_ammo", 1)
+
+func _on_attacker_threw(owner_peer_id: int) -> void:
+	if not multiplayer.is_server():
+		return
+	_attackers_used[owner_peer_id] = true
+	if not _round_can_hit and _all_attackers_used():
+		var attackers := _get_attackers_list()
+		_open_defender_select_for_current_defender(attackers)
+
+func _on_can_hit() -> void:
+	# Attacker hit the can. Defender remains the same. Start a fresh round.
+	if not multiplayer.is_server():
+		return
+	_round_can_hit = true
+	_round_begin_state()
+
+func _get_attackers_list() -> Array:
+	var out: Array = []
+	if Engine.has_singleton("GameConfig"):
+		var roles := GameConfig.roles if "roles" in GameConfig else {}
+		for pid in roles.keys():
+			if String(roles[pid]).to_lower() == "thrower":
+				out.append(int(pid))
+	out.sort()
+	return out
+
+func _get_current_defender_id() -> int:
+	if Engine.has_singleton("GameConfig"):
+		var roles := GameConfig.roles if "roles" in GameConfig else {}
+		for pid in roles.keys():
+			if String(roles[pid]).to_lower() == "defender":
+				return int(pid)
+	return -1
+
+func _all_attackers_used() -> bool:
+	var attackers := _get_attackers_list()
+	if attackers.size() == 0:
+		return false
+	for pid in attackers:
+		if not _attackers_used.has(pid):
+			return false
+	return true
+
+func _open_defender_select_for_current_defender(attackers: Array) -> void:
+	var def_id := _get_current_defender_id()
+	if def_id == -1:
+		return
+	rpc_id(def_id, "_rpc_open_defender_select", attackers)
+
+@rpc("any_peer", "call_local", "reliable")
+func _rpc_open_defender_select(attackers: Array) -> void:
+	# Runs on the defender client: show selection UI
+	var ui := get_tree().current_scene.find_child("UIManager", true, false)
+	if ui and ui.has_method("show_defender_select"):
+		ui.call("show_defender_select", attackers)
+		if ui.has_signal("defender_selected"):
+			if not ui.is_connected("defender_selected", Callable(self, "_on_defender_selected_locally")):
+				ui.connect("defender_selected", Callable(self, "_on_defender_selected_locally"))
+
+func _on_defender_selected_locally(pid: int) -> void:
+	# Defender client requests the server to rotate roles
+	rpc("_rpc_request_defender_switch", pid)
+	# Hide local UI
+	var ui := get_tree().current_scene.find_child("UIManager", true, false)
+	if ui and ui.has_method("hide_defender_select"):
+		ui.call("hide_defender_select")
+
+@rpc("any_peer", "reliable")
+func _rpc_request_defender_switch(selected_peer: int) -> void:
+	if not multiplayer.is_server():
+		return
+	var sender := multiplayer.get_remote_sender_id()
+	if sender != _get_current_defender_id():
+		return
+	if not Engine.has_singleton("GameConfig"):
+		return
+	var roles: Dictionary = GameConfig.roles.duplicate(true)
+	var current_def := _get_current_defender_id()
+	if current_def == -1:
+		return
+	# Rotate: selected becomes defender; previous defender becomes attacker
+	for pid in roles.keys():
+		if int(pid) == selected_peer:
+			roles[pid] = "defender"
+		elif int(pid) == current_def:
+			roles[pid] = "thrower"
+	GameConfig.clear_roles()
+	GameConfig.roles = roles
+	rpc("_rpc_update_roles_client_side", roles)
+	_reposition_players_after_role_change()
+	_round_begin_state()
+
+@rpc("any_peer", "call_local", "reliable")
+func _rpc_update_roles_client_side(new_roles: Dictionary) -> void:
+	if Engine.has_singleton("GameConfig"):
+		GameConfig.clear_roles()
+		GameConfig.roles = new_roles.duplicate(true)
+
+func _reposition_players_after_role_change() -> void:
+	if not multiplayer.is_server():
+		return
+	var roles: Dictionary = GameConfig.roles
+	var all_pids: Array = [1]
+	for pid in multiplayer.get_peers():
+		all_pids.append(pid)
+	var attackers: Array = []
+	for pid in all_pids:
+		if String(roles.get(pid, "thrower")).to_lower() == "thrower":
+			attackers.append(pid)
+	attackers.sort()
+	var idx_by_pid: Dictionary = {}
+	for i in range(attackers.size()):
+		idx_by_pid[attackers[i]] = i
+	for pid in all_pids:
+		var p := get_node_or_null("Player_%s" % pid)
+		if p and p is Node2D:
+			var role := String(roles.get(pid, "thrower"))
+			if "role" in p:
+				p.set("role", role)
+			var spawn := _fallback_spawn_by_role(role)
+			if role.to_lower() == "defender" and _defender_spawn_global != Vector2.ZERO:
+				spawn = _defender_spawn_global
+			elif role.to_lower() == "thrower" and _attacker_spawn_global != Vector2.ZERO:
+				spawn = _attacker_spawn_global + _attacker_offset_for(int(idx_by_pid.get(pid, -1)))
+			(p as Node2D).global_position = spawn
+	# Reset ammo for the new round
+	_round_begin_state()

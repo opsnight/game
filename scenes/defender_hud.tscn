@@ -1,0 +1,37 @@
+[gd_scene load_steps=2 format=3 uid="uid://bvn8x7k2m5qr1"]
+
+[ext_resource type="Script" path="res://scripts/defender_hud.gd" id="1_def_script"]
+
+[node name="DefenderHUD" type="Control"]
+layout_mode = 3
+anchors_preset = 2
+anchor_top = 1.0
+anchor_bottom = 1.0
+offset_top = -48.0
+offset_right = 200.0
+grow_vertical = 0
+mouse_filter = 2
+script = ExtResource("1_def_script")
+
+[node name="MarginContainer" type="MarginContainer" parent="."]
+layout_mode = 0
+offset_left = 8.0
+offset_top = -40.0
+offset_right = 196.0
+offset_bottom = -8.0
+mouse_filter = 2
+
+[node name="HBoxContainer" type="HBoxContainer" parent="MarginContainer"]
+layout_mode = 2
+
+[node name="DefenderLabel" type="Label" parent="MarginContainer/HBoxContainer"]
+custom_minimum_size = Vector2(120, 24)
+layout_mode = 2
+text = "DEFENDER"
+vertical_alignment = 1
+
+[node name="StatusLabel" type="Label" parent="MarginContainer/HBoxContainer"]
+custom_minimum_size = Vector2(80, 24)
+layout_mode = 2
+text = "Ready"
+vertical_alignment = 1

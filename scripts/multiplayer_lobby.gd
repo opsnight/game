@@ -72,18 +72,50 @@ func _on_start_game() -> void:
 	if not multiplayer.is_server():
 		_update_status("Only server can start the game.")
 		return
-	# Tell everyone to switch to the gameplay scene
+	# Role assignment logic: if exactly 2 players, server=attacker, client=defender
+	# If more than 2, randomize roles: 1 defender, up to 5 throwers
+	var all_ids: Array = [1]
+	for p in multiplayer.get_peers():
+		all_ids.append(p)
+
+	var roles: Dictionary = {}
+	if all_ids.size() == 2:
+		# Exactly 2 players: server is attacker, client is defender
+		roles[1] = "thrower"  # Server (peer 1)
+		roles[all_ids[1]] = "defender"  # First client
+	else:
+		# More than 2 players: randomize roles
+		all_ids.shuffle()
+		if all_ids.size() > 0:
+			roles[all_ids[0]] = "defender"
+		# All remaining peers are attackers
+		for i in range(1, all_ids.size()):
+			roles[all_ids[i]] = "thrower"
+
+	# Save roles locally and broadcast to clients
+	if Engine.has_singleton("GameConfig"):
+		GameConfig.clear_roles()
+		GameConfig.roles = roles
+	rpc("_rpc_set_roles", roles)
+	# Start game for everyone
 	rpc("_rpc_begin_game")
 
 @rpc("any_peer", "call_local", "reliable")
 func _rpc_begin_game() -> void:
 	get_tree().change_scene_to_file("res://scenes/world.tscn")
 
+@rpc("any_peer", "call_local", "reliable")
+func _rpc_set_roles(new_roles: Dictionary) -> void:
+	if Engine.has_singleton("GameConfig"):
+		GameConfig.clear_roles()
+		GameConfig.roles = new_roles.duplicate(true)
+
 func _on_peer_connected(id: int) -> void:
 	_refresh_players()
 	if multiplayer.is_server():
 		_update_status("Peer connected: %d" % id)
-
+		# Broadcast roles to all peers
+		rpc("_rpc_set_roles", GameConfig.roles)
 func _on_peer_disconnected(id: int) -> void:
 	_refresh_players()
 	_update_status("Peer disconnected: %d" % id)

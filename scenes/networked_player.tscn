@@ -1,8 +1,9 @@
-[gd_scene load_steps=16 format=3 uid="uid://b7vi5lt56rvjd"]
+[gd_scene load_steps=23 format=3 uid="uid://b7vi5lt56rvjd"]
 
 [ext_resource type="Script" uid="uid://dlqf4dga4fp85" path="res://scripts/networked_player.gd" id="1"]
 [ext_resource type="Texture2D" uid="uid://bgxe56k7afcc4" path="res://assets/free-pixel-art-tiny-hero-sprites/2 Owlet_Monster - Copy/Owlet_Monster_Idle_4.png" id="2_idle"]
 [ext_resource type="Texture2D" uid="uid://diniegu041lsl" path="res://assets/free-pixel-art-tiny-hero-sprites/2 Owlet_Monster - Copy/Owlet_Monster_Walk_6.png" id="3_walk"]
+[ext_resource type="Texture2D" uid="uid://dbobjv6jxd02r" path="res://assets/free-pixel-art-tiny-hero-sprites/2 Owlet_Monster - Copy/Owlet_Monster_Run_6.png" id="4_run"]
 
 [sub_resource type="RectangleShape2D" id="1_shape"]
 size = Vector2(23, 29)
@@ -22,6 +23,30 @@ region = Rect2(64, 0, 32, 32)
 [sub_resource type="AtlasTexture" id="2_i3"]
 atlas = ExtResource("2_idle")
 region = Rect2(96, 0, 32, 32)
+
+[sub_resource type="AtlasTexture" id="4_r0"]
+atlas = ExtResource("4_run")
+region = Rect2(0, 0, 32, 32)
+
+[sub_resource type="AtlasTexture" id="4_r1"]
+atlas = ExtResource("4_run")
+region = Rect2(32, 0, 32, 32)
+
+[sub_resource type="AtlasTexture" id="4_r2"]
+atlas = ExtResource("4_run")
+region = Rect2(64, 0, 32, 32)
+
+[sub_resource type="AtlasTexture" id="4_r3"]
+atlas = ExtResource("4_run")
+region = Rect2(96, 0, 32, 32)
+
+[sub_resource type="AtlasTexture" id="4_r4"]
+atlas = ExtResource("4_run")
+region = Rect2(128, 0, 32, 32)
+
+[sub_resource type="AtlasTexture" id="4_r5"]
+atlas = ExtResource("4_run")
+region = Rect2(160, 0, 32, 32)
 
 [sub_resource type="AtlasTexture" id="3_w0"]
 atlas = ExtResource("3_walk")
@@ -68,6 +93,29 @@ animations = [{
 }, {
 "frames": [{
 "duration": 1.0,
+"texture": SubResource("4_r0")
+}, {
+"duration": 1.0,
+"texture": SubResource("4_r1")
+}, {
+"duration": 1.0,
+"texture": SubResource("4_r2")
+}, {
+"duration": 1.0,
+"texture": SubResource("4_r3")
+}, {
+"duration": 1.0,
+"texture": SubResource("4_r4")
+}, {
+"duration": 1.0,
+"texture": SubResource("4_r5")
+}],
+"loop": true,
+"name": &"back_run",
+"speed": 12.0
+}, {
+"frames": [{
+"duration": 1.0,
 "texture": SubResource("3_w0")
 }, {
 "duration": 1.0,
@@ -105,6 +153,29 @@ animations = [{
 "loop": true,
 "name": &"front_idle",
 "speed": 8.0
+}, {
+"frames": [{
+"duration": 1.0,
+"texture": SubResource("4_r0")
+}, {
+"duration": 1.0,
+"texture": SubResource("4_r1")
+}, {
+"duration": 1.0,
+"texture": SubResource("4_r2")
+}, {
+"duration": 1.0,
+"texture": SubResource("4_r3")
+}, {
+"duration": 1.0,
+"texture": SubResource("4_r4")
+}, {
+"duration": 1.0,
+"texture": SubResource("4_r5")
+}],
+"loop": true,
+"name": &"front_run",
+"speed": 12.0
 }, {
 "frames": [{
 "duration": 1.0,

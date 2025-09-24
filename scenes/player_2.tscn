@@ -345,3 +345,7 @@ sprite_frames = SubResource("SpriteFrames_5jyyy")
 animation = &"b_walk"
 autoplay = "f_idle"
 frame_progress = 0.810009
+
+[node name="Camera2D" type="Camera2D" parent="."]
+position_smoothing_enabled = true
+position_smoothing_speed = 6.0

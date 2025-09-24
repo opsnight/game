@@ -14,10 +14,11 @@ func _ready() -> void:
 	# Connect to slipper signals
 	_connect_slipper_signals()
 	
-	# Connect to defender AI
-	var defender = get_tree().get_first_node_in_group("defender")
-	if defender and defender.has_signal("caught_slipper"):
-		defender.connect("caught_slipper", Callable(self, "_on_ai_caught_slipper"))
+	# Connect to defender AI (offline only). In LAN we do not use AI.
+	if get_tree().get_multiplayer() == null or get_tree().get_multiplayer().multiplayer_peer == null:
+		var defender = get_tree().get_first_node_in_group("defender")
+		if defender and defender.has_signal("caught_slipper"):
+			defender.connect("caught_slipper", Callable(self, "_on_ai_caught_slipper"))
 
 func _connect_slipper_signals() -> void:
 	# Connect to existing slippers and watch for new ones

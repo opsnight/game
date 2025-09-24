@@ -20,6 +20,8 @@ var carry_pickup_radius: float = 36.0
 var carry_drop_radius: float = 24.0
 var attack_cooldown: float = 0.0
 
+@onready var cam: Camera2D = $Camera2D
+
 func _ready() -> void:
 	# Ensure sprite renders above the TileMap
 	self.z_index = 100
@@ -30,6 +32,8 @@ func _ready() -> void:
 	var found_can := get_tree().current_scene.find_child("Can", true, false)
 	if found_can and found_can is Node2D:
 		can_node = found_can
+	# Setup camera limits but do not make it current by default
+	_setup_camera_limits()
 
 func _physics_process(delta: float) -> void:
 	player_movement(delta)
@@ -261,3 +265,37 @@ func _handle_can_interactions() -> void:
 					can_node.end_carry()
 				if can_node.has_method("reset_to_original"):
 					can_node.reset_to_original()
+
+func _setup_camera_limits() -> void:
+	if cam == null:
+		return
+	var tilemap := get_tree().get_first_node_in_group("world_tilemap")
+	if tilemap == null:
+		var root := get_tree().current_scene
+		if root:
+			for child in root.get_children():
+				if child is TileMap:
+					tilemap = child
+					break
+	if tilemap == null:
+		return
+	var used_rect: Rect2i = tilemap.get_used_rect()
+	var tile_size: Vector2i = tilemap.tile_set.tile_size
+	var left = used_rect.position.x * tile_size.x
+	var top = used_rect.position.y * tile_size.y
+	var right = (used_rect.position.x + used_rect.size.x) * tile_size.x
+	var bottom = (used_rect.position.y + used_rect.size.y) * tile_size.y
+	cam.limit_left = left
+	cam.limit_top = top
+	cam.limit_right = right
+	cam.limit_bottom = bottom
+	cam.enabled = false
+
+func enable_camera_current() -> void:
+	if cam:
+		cam.enabled = true
+		cam.make_current()
+
+func disable_camera() -> void:
+	if cam:
+		cam.enabled = false
