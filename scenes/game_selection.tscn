@@ -1,0 +1,92 @@
+[gd_scene load_steps=9 format=3 uid="uid://dij67wrskr03c"]
+
+[ext_resource type="Script" uid="uid://bxcva275x0w07" path="res://scripts/game_selection.gd" id="1"]
+[ext_resource type="Texture2D" uid="uid://cpew7t3b4wg8e" path="res://assets/Background.png" id="2_injun"]
+[ext_resource type="FontFile" uid="uid://c50p2df7g3rnl" path="res://assets/free-pixel-art-tiny-hero-sprites/Font/04B_30__.TTF" id="3_gk2da"]
+
+[sub_resource type="StyleBoxTexture" id="StyleBoxTexture_7x6e8"]
+texture = ExtResource("2_injun")
+modulate_color = Color(0.419813, 0.419813, 0.419813, 1)
+
+[sub_resource type="StyleBoxEmpty" id="StyleBoxEmpty_kygqd"]
+
+[sub_resource type="StyleBoxEmpty" id="StyleBoxEmpty_pjnf7"]
+
+[sub_resource type="StyleBoxEmpty" id="StyleBoxEmpty_p4nnn"]
+
+[sub_resource type="StyleBoxEmpty" id="StyleBoxEmpty_2ihvi"]
+
+[node name="GameSelection" type="Node2D"]
+script = ExtResource("1")
+
+[node name="UI" type="CanvasLayer" parent="."]
+
+[node name="Panel" type="Control" parent="UI"]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="background" type="Panel" parent="UI/Panel"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_styles/panel = SubResource("StyleBoxTexture_7x6e8")
+
+[node name="back" type="Button" parent="UI/Panel/background"]
+layout_mode = 0
+offset_right = 105.0
+offset_bottom = 102.0
+size_flags_vertical = 3
+theme_override_colors/font_hover_color = Color(0, 0, 0, 1)
+theme_override_colors/font_color = Color(0, 0, 0, 1)
+theme_override_colors/font_focus_color = Color(0, 0, 0, 1)
+theme_override_colors/font_pressed_color = Color(0, 0, 0, 1)
+theme_override_fonts/font = ExtResource("3_gk2da")
+theme_override_font_sizes/font_size = 55
+theme_override_styles/focus = SubResource("StyleBoxEmpty_kygqd")
+theme_override_styles/hover = SubResource("StyleBoxEmpty_pjnf7")
+theme_override_styles/pressed = SubResource("StyleBoxEmpty_p4nnn")
+theme_override_styles/normal = SubResource("StyleBoxEmpty_2ihvi")
+text = "←
+"
+
+[node name="VBox" type="VBoxContainer" parent="UI/Panel"]
+layout_mode = 1
+anchors_preset = 8
+anchor_left = 0.5
+anchor_top = 0.5
+anchor_right = 0.5
+anchor_bottom = 0.5
+offset_left = -120.0
+offset_top = -90.0
+offset_right = 120.0
+offset_bottom = 90.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="Title" type="Label" parent="UI/Panel/VBox"]
+layout_mode = 2
+theme_override_fonts/font = ExtResource("3_gk2da")
+text = "Select Mode"
+horizontal_alignment = 1
+
+[node name="LANButton" type="Button" parent="UI/Panel/VBox"]
+layout_mode = 2
+theme_override_fonts/font = ExtResource("3_gk2da")
+text = "LAN"
+
+[node name="LocalButton" type="Button" parent="UI/Panel/VBox"]
+layout_mode = 2
+theme_override_fonts/font = ExtResource("3_gk2da")
+text = "Local (Offline)"
+
+[node name="BackButton" type="Button" parent="UI/Panel/VBox"]
+layout_mode = 2
+theme_override_fonts/font = ExtResource("3_gk2da")
+text = "Back"

@@ -20,6 +20,9 @@ var carry_pickup_radius: float = 36.0
 var carry_drop_radius: float = 24.0
 
 func _ready() -> void:
+	# Ensure sprite renders above the TileMap
+	self.z_index = 100
+	$AnimatedSprite2D.z_index = 100
 	$AnimatedSprite2D.play("f_idle")
 	# Cache references
 	player1 = get_tree().current_scene.find_child("player", true, false)

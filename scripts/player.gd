@@ -15,7 +15,7 @@ const RUN_ACCEL_MULTIPLIER := 1.6
 @export var aim_arrow_scene: PackedScene = preload("res://scenes/aim_arrow.tscn")
 var is_throwing: bool = false
 var _last_dir_vec: Vector2 = Vector2.DOWN
-const MAX_SLIPPERS := 3
+const MAX_SLIPPERS := 1
 var slippers_available: int = MAX_SLIPPERS
 var is_hurt: bool = false
 var is_aiming: bool = false
@@ -31,14 +31,24 @@ var base_center: Vector2
 var can_leave_base: bool = false
 var at_base: bool = true
 
+# Overlay options (affect ONLY this player's sprite)
+@export_enum("none", "green", "red", "blue", "pink") var overlay_variant: String = "none"
+@export_range(0.0, 1.0, 0.01) var overlay_strength: float = 1.0
+
 func _ready() -> void:
 	$AnimatedSprite2D.play("front_idle")
+	# Ensure this character draws above tiles regardless of parent draw order
+	self.z_as_relative = false
+	self.z_index = 200
+	$AnimatedSprite2D.z_index = 200
 	_setup_camera_limits()
 	# tell UI initial ammo
 	ammo_changed.emit(slippers_available, MAX_SLIPPERS)
 	# initialize base center at spawn
 	base_center = global_position
 	at_base = true
+	# Apply optional color overlay for this player only
+	_apply_overlay()
 
 
 func _physics_process(delta: float) -> void:
@@ -367,6 +377,51 @@ func _stop_aim() -> void:
 	if _aim_arrow != null:
 		_aim_arrow.queue_free()
 		_aim_arrow = null
+
+# --- Overlay helpers (player-only tint on AnimatedSprite2D) ---
+func set_overlay_variant(variant: String, strength: float = -1.0) -> void:
+	overlay_variant = variant
+	if strength >= 0.0:
+		overlay_strength = clamp(strength, 0.0, 1.0)
+	_apply_overlay()
+
+func clear_overlay() -> void:
+	set_overlay_variant("none", 0.0)
+
+func apply_green_overlay() -> void:
+	set_overlay_variant("green", overlay_strength)
+
+func apply_red_overlay() -> void:
+	set_overlay_variant("red", overlay_strength)
+
+func apply_blue_overlay() -> void:
+	set_overlay_variant("blue", overlay_strength)
+
+func apply_pink_overlay() -> void:
+	set_overlay_variant("pink", overlay_strength)
+
+func _apply_overlay() -> void:
+	var spr: AnimatedSprite2D = $AnimatedSprite2D
+	if spr == null:
+		return
+	var base: Color = Color(1, 1, 1, 1)
+	var tint: Color = _overlay_color_for(overlay_variant)
+	var k: float = clamp(overlay_strength, 0.0, 1.0)
+	# Use self_modulate to limit effect to this sprite only
+	spr.self_modulate = base.lerp(tint, k)
+
+func _overlay_color_for(variant: String) -> Color:
+	match variant:
+		"green":
+			return Color(0.75, 1.0, 0.75, 1.0)
+		"red":
+			return Color(1.0, 0.65, 0.65, 1.0)
+		"blue":
+			return Color(0.7, 0.8, 1.0, 1.0)
+		"pink":
+			return Color(1.0, 0.7, 0.9, 1.0)
+		_:
+			return Color(1,1,1,1)
 
 func _recall_nearest_slipper() -> void:
 	# Find the closest active slipper in the scene and trigger its recall behavior

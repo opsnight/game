@@ -1,14 +1,18 @@
 extends RigidBody2D
 
 signal picked_up
+signal ai_picked_up
 
 # Throw parameters (top-down, so no gravity)
 @export var speed: float = 800.0
 @export var linear_damp_when_free: float = 4.0
 @export var angular_spin: float = 6.0
 @export var pickup_radius: float = 24.0
+@export var ground_threshold: float = 50.0  # Speed below which slipper is considered "on ground"
 
 @onready var pickup_area: Area2D = get_node_or_null("PickupArea")
+var is_thrown: bool = true
+var on_ground: bool = false
 
 func _ready() -> void:
 	if not is_in_group("slipper"):
@@ -42,8 +46,14 @@ func init(dir: Vector2, power: float = 1.0) -> void:
 	rotation = linear_velocity.angle()
 
 func _physics_process(delta: float) -> void:
+	# Check if slipper has slowed down enough to be considered "on ground"
+	var current_speed = linear_velocity.length()
+	if is_thrown and current_speed < ground_threshold:
+		on_ground = true
+		is_thrown = false
+	
 	# Align sprite to travel direction when moving
-	if linear_velocity.length() > 1.0:
+	if current_speed > 1.0:
 		rotation = linear_velocity.angle()
 
 func _on_body_entered(body: Node) -> void:
@@ -55,7 +65,19 @@ func _on_body_entered(body: Node) -> void:
 		return
 
 func _on_pickup_body_entered(body: Node) -> void:
+	# Only allow pickup when slipper is on ground
+	if not on_ground:
+		return
+		
 	# Dedicated handler for the PickupArea -> only pick up when player overlaps the area
 	if body is CharacterBody2D and ("player" in String(body.name).to_lower() or body.has_method("_on_slipper_picked")):
 		emit_signal("picked_up")
 		queue_free()
+
+func is_on_ground() -> bool:
+	return on_ground
+
+func ai_pickup() -> void:
+	# Called when AI reaches the slipper first
+	emit_signal("ai_picked_up")
+	queue_free()

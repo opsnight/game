@@ -1,0 +1,150 @@
+[gd_scene load_steps=16 format=3 uid="uid://b7vi5lt56rvjd"]
+
+[ext_resource type="Script" uid="uid://dlqf4dga4fp85" path="res://scripts/networked_player.gd" id="1"]
+[ext_resource type="Texture2D" uid="uid://bgxe56k7afcc4" path="res://assets/free-pixel-art-tiny-hero-sprites/2 Owlet_Monster - Copy/Owlet_Monster_Idle_4.png" id="2_idle"]
+[ext_resource type="Texture2D" uid="uid://diniegu041lsl" path="res://assets/free-pixel-art-tiny-hero-sprites/2 Owlet_Monster - Copy/Owlet_Monster_Walk_6.png" id="3_walk"]
+
+[sub_resource type="RectangleShape2D" id="1_shape"]
+size = Vector2(23, 29)
+
+[sub_resource type="AtlasTexture" id="2_i0"]
+atlas = ExtResource("2_idle")
+region = Rect2(0, 0, 32, 32)
+
+[sub_resource type="AtlasTexture" id="2_i1"]
+atlas = ExtResource("2_idle")
+region = Rect2(32, 0, 32, 32)
+
+[sub_resource type="AtlasTexture" id="2_i2"]
+atlas = ExtResource("2_idle")
+region = Rect2(64, 0, 32, 32)
+
+[sub_resource type="AtlasTexture" id="2_i3"]
+atlas = ExtResource("2_idle")
+region = Rect2(96, 0, 32, 32)
+
+[sub_resource type="AtlasTexture" id="3_w0"]
+atlas = ExtResource("3_walk")
+region = Rect2(0, 0, 32, 32)
+
+[sub_resource type="AtlasTexture" id="3_w1"]
+atlas = ExtResource("3_walk")
+region = Rect2(32, 0, 32, 32)
+
+[sub_resource type="AtlasTexture" id="3_w2"]
+atlas = ExtResource("3_walk")
+region = Rect2(64, 0, 32, 32)
+
+[sub_resource type="AtlasTexture" id="3_w3"]
+atlas = ExtResource("3_walk")
+region = Rect2(96, 0, 32, 32)
+
+[sub_resource type="AtlasTexture" id="3_w4"]
+atlas = ExtResource("3_walk")
+region = Rect2(128, 0, 32, 32)
+
+[sub_resource type="AtlasTexture" id="3_w5"]
+atlas = ExtResource("3_walk")
+region = Rect2(160, 0, 32, 32)
+
+[sub_resource type="SpriteFrames" id="4_frames"]
+animations = [{
+"frames": [{
+"duration": 1.0,
+"texture": SubResource("2_i0")
+}, {
+"duration": 1.0,
+"texture": SubResource("2_i1")
+}, {
+"duration": 1.0,
+"texture": SubResource("2_i2")
+}, {
+"duration": 1.0,
+"texture": SubResource("2_i3")
+}],
+"loop": true,
+"name": &"back_idle",
+"speed": 8.0
+}, {
+"frames": [{
+"duration": 1.0,
+"texture": SubResource("3_w0")
+}, {
+"duration": 1.0,
+"texture": SubResource("3_w1")
+}, {
+"duration": 1.0,
+"texture": SubResource("3_w2")
+}, {
+"duration": 1.0,
+"texture": SubResource("3_w3")
+}, {
+"duration": 1.0,
+"texture": SubResource("3_w4")
+}, {
+"duration": 1.0,
+"texture": SubResource("3_w5")
+}],
+"loop": true,
+"name": &"back_walk",
+"speed": 10.0
+}, {
+"frames": [{
+"duration": 1.0,
+"texture": SubResource("2_i0")
+}, {
+"duration": 1.0,
+"texture": SubResource("2_i1")
+}, {
+"duration": 1.0,
+"texture": SubResource("2_i2")
+}, {
+"duration": 1.0,
+"texture": SubResource("2_i3")
+}],
+"loop": true,
+"name": &"front_idle",
+"speed": 8.0
+}, {
+"frames": [{
+"duration": 1.0,
+"texture": SubResource("3_w0")
+}, {
+"duration": 1.0,
+"texture": SubResource("3_w1")
+}, {
+"duration": 1.0,
+"texture": SubResource("3_w2")
+}, {
+"duration": 1.0,
+"texture": SubResource("3_w3")
+}, {
+"duration": 1.0,
+"texture": SubResource("3_w4")
+}, {
+"duration": 1.0,
+"texture": SubResource("3_w5")
+}],
+"loop": true,
+"name": &"front_walk",
+"speed": 10.0
+}]
+
+[node name="NetworkedPlayer" type="CharacterBody2D"]
+script = ExtResource("1")
+
+[node name="MultiplayerSynchronizer" type="MultiplayerSynchronizer" parent="."]
+
+[node name="CollisionShape2D" type="CollisionShape2D" parent="."]
+position = Vector2(0.5, 1.5)
+shape = SubResource("1_shape")
+
+[node name="AnimatedSprite2D" type="AnimatedSprite2D" parent="."]
+position = Vector2(3, -2)
+sprite_frames = SubResource("4_frames")
+animation = &"front_idle"
+autoplay = "front_idle"
+
+[node name="Camera2D" type="Camera2D" parent="."]
+position_smoothing_enabled = true
+position_smoothing_speed = 6.0
