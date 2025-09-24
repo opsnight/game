@@ -2,6 +2,8 @@ extends RigidBody2D
 
 @export var hit_impulse_scale: float = 1.2
 @export var min_impulse: float = 150.0
+@export var max_impulse: float = 1200.0
+@export var fence_margin: float = 24.0 # keep can inside the fence by this margin
 
 # Remember original spawn to allow resets and knockdown checks
 var original_position: Vector2
@@ -14,6 +16,8 @@ func _ready() -> void:
 	# Enable contact monitoring so body_entered works on RigidBody2D
 	contact_monitor = true
 	max_contacts_reported = 8
+	# Reduce tunneling through walls
+	continuous_cd = RigidBody2D.CCD_MODE_CAST_SHAPE
 	gravity_scale = 0.0
 	linear_damp = 6.0
 	angular_damp = 6.0
@@ -43,6 +47,8 @@ func _apply_hit_from(node: Node) -> void:
 		if dir.length() == 0:
 			dir = Vector2.UP
 		impulse = dir.normalized() * min_impulse
+	if impulse.length() > max_impulse:
+		impulse = impulse.limit_length(max_impulse)
 	apply_impulse(impulse)
 
 func is_knocked_down(threshold: float = 30.0) -> bool:
