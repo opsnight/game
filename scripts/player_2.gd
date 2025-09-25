@@ -150,9 +150,9 @@ func _start_attack() -> void:
 	var base: String = _base_from_dir(current_dir)
 	var flip_left: bool = current_dir in ["left", "down_left", "up_left"]
 	anim.flip_h = flip_left
-	var name: String = base + "_attack"
-	if anim.sprite_frames and anim.sprite_frames.has_animation(name):
-		anim.play(name)
+	var anim_name: String = base + "_attack"
+	if anim.sprite_frames and anim.sprite_frames.has_animation(anim_name):
+		anim.play(anim_name)
 	# End attack after short window
 	await get_tree().create_timer(0.3).timeout
 	is_attacking = false

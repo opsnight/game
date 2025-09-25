@@ -11,6 +11,8 @@ size = Vector2(16, 29)
 [node name="Slipper" type="RigidBody2D"]
 script = ExtResource("2_slp")
 
+[node name="MultiplayerSynchronizer" type="MultiplayerSynchronizer" parent="."]
+
 [node name="Sprite2D" type="Sprite2D" parent="."]
 scale = Vector2(0.0853306, 0.0691748)
 texture = ExtResource("1_slp")

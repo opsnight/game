@@ -31,3 +31,7 @@ func _on_back() -> void:
 		get_tree().change_scene_to_file(menu_path)
 	else:
 		print("Main menu scene not found at ", menu_path)
+
+
+func _on_back_pressed() -> void:
+	get_tree().change_scene_to_file("res://scenes/main_menu.tscn")

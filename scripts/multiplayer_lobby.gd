@@ -37,7 +37,6 @@ func _ready() -> void:
 	multiplayer.server_disconnected.connect(_on_server_disconnected)
 	
 	# Show a helpful default IP
-	ip_input.text = _get_local_ip()
 	_update_status("Idle. Enter IP and Host/Join.")
 	_refresh_players()
 
@@ -168,3 +167,6 @@ func _is_valid_ipv4(ip: String) -> bool:
 		if n < 0 or n > 255:
 			return false
 	return true
+
+func _on_back_pressed() -> void:
+	get_tree().change_scene_to_file("res://scenes/game_selection.tscn")

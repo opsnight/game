@@ -12,13 +12,16 @@ var carrier: Node2D = null
 @onready var _tilemap: TileMap = get_tree().get_first_node_in_group("world_tilemap")
 var _bounds_inset: float = 10.0
 
+@export var sync_position: Vector2
+@export var sync_linear_velocity: Vector2
+@export var sync_rotation: float = 0.0
+
 func _ready() -> void:
 	# Enable contact monitoring so body_entered works on RigidBody2D
 	contact_monitor = true
 	max_contacts_reported = 8
 	# Reduce tunneling through walls
 	continuous_cd = RigidBody2D.CCD_MODE_CAST_SHAPE
-	gravity_scale = 0.0
 	linear_damp = 6.0
 	angular_damp = 6.0
 	# Help prevent tunneling on hard hits
@@ -28,6 +31,25 @@ func _ready() -> void:
 	self.body_entered.connect(Callable(self, "_on_body_entered"))
 	# Store original spawn
 	original_position = global_position
+	var sync := get_node_or_null("MultiplayerSynchronizer")
+	if sync:
+		var rc := SceneReplicationConfig.new()
+		var p_pos := NodePath(".:sync_position")
+		var p_lin := NodePath(".:sync_linear_velocity")
+		var p_rot := NodePath(".:sync_rotation")
+		rc.add_property(p_pos)
+		rc.add_property(p_lin)
+		rc.add_property(p_rot)
+		rc.property_set_replication_mode(p_pos, SceneReplicationConfig.REPLICATION_MODE_ALWAYS)
+		rc.property_set_replication_mode(p_lin, SceneReplicationConfig.REPLICATION_MODE_ALWAYS)
+		rc.property_set_replication_mode(p_rot, SceneReplicationConfig.REPLICATION_MODE_ALWAYS)
+		rc.property_set_spawn(p_pos, true)
+		rc.property_set_spawn(p_lin, true)
+		rc.property_set_spawn(p_rot, true)
+		sync.replication_config = rc
+		sync_position = global_position
+		sync_linear_velocity = linear_velocity
+		sync_rotation = rotation
 
 func _on_body_entered(body: Node) -> void:
 	if body and body.is_in_group("slipper"):
@@ -55,20 +77,10 @@ func is_knocked_down(threshold: float = 30.0) -> bool:
 	# Consider knocked down if moved sufficiently from original position
 	return global_position.distance_to(original_position) > threshold
 
-func reset_to_original() -> void:
-	# Put the can back exactly, clear all physics motion
-	freeze = true
-	linear_velocity = Vector2.ZERO
-	angular_velocity = 0.0
-	global_position = original_position
-	rotation = 0.0
-	freeze = false
-
 func begin_carry(by: Node2D) -> void:
 	# Freeze physics and attach visually to the carrier
 	is_being_carried = true
 	carrier = by
-	freeze = true
 	linear_velocity = Vector2.ZERO
 	angular_velocity = 0.0
 	# Keep as sibling but follow in _process via carrier
@@ -84,6 +96,18 @@ func end_carry() -> void:
 	set_deferred("collision_mask", 1)
 
 func _physics_process(delta: float) -> void:
+	var sync := get_node_or_null("MultiplayerSynchronizer")
+	if sync:
+		var is_authority := multiplayer.is_server()
+		if is_authority:
+			sync_position = global_position
+			sync_linear_velocity = linear_velocity
+			sync_rotation = rotation
+		else:
+			var alpha: float = clamp(delta * 8.0, 0.0, 1.0)
+			global_position = global_position.lerp(sync_position, alpha)
+			linear_velocity = linear_velocity.lerp(sync_linear_velocity, alpha)
+			rotation = lerp_angle(rotation, sync_rotation, alpha)
 	if is_being_carried and carrier:
 		# Follow a point slightly in front of the carrier
 		var to_dir := Vector2.DOWN

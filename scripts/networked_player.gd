@@ -31,7 +31,7 @@ const MAX_SPEED_MULT := 2.0
 var _aim_started_at: float = 0.0
 
 func _ready() -> void:
-	_anim = $AnimatedSprite2D
+	_anim = get_node_or_null("AnimatedSprite2D") as AnimatedSprite2D
 	_camera = get_node_or_null("Camera2D")
 	if _anim:
 		_anim.play("front_idle")

@@ -1,11 +1,20 @@
-[gd_scene load_steps=4 format=3 uid="uid://dgmcgr827lgni"]
+[gd_scene load_steps=9 format=3 uid="uid://dgmcgr827lgni"]
 
 [ext_resource type="Script" uid="uid://bfmmm7lvo7bn1" path="res://scripts/multiplayer_lobby.gd" id="1"]
 [ext_resource type="Texture2D" uid="uid://cpew7t3b4wg8e" path="res://assets/Background.png" id="2_jmixo"]
+[ext_resource type="FontFile" uid="uid://c50p2df7g3rnl" path="res://assets/free-pixel-art-tiny-hero-sprites/Font/04B_30__.TTF" id="3_qcbuv"]
 
 [sub_resource type="StyleBoxTexture" id="StyleBoxTexture_qcbuv"]
 texture = ExtResource("2_jmixo")
 modulate_color = Color(0.385493, 0.385492, 0.385492, 1)
+
+[sub_resource type="StyleBoxEmpty" id="StyleBoxEmpty_k0oi5"]
+
+[sub_resource type="StyleBoxEmpty" id="StyleBoxEmpty_aug7r"]
+
+[sub_resource type="StyleBoxEmpty" id="StyleBoxEmpty_i060o"]
+
+[sub_resource type="StyleBoxEmpty" id="StyleBoxEmpty_ou3kw"]
 
 [node name="MultiplayerLobby" type="Node2D"]
 script = ExtResource("1")
@@ -28,6 +37,23 @@ anchor_bottom = 1.0
 grow_horizontal = 2
 grow_vertical = 2
 theme_override_styles/panel = SubResource("StyleBoxTexture_qcbuv")
+
+[node name="back" type="Button" parent="UI/background"]
+offset_right = 89.0
+offset_bottom = 81.0
+size_flags_vertical = 3
+theme_override_colors/font_hover_color = Color(0, 0, 0, 1)
+theme_override_colors/font_color = Color(0, 0, 0, 1)
+theme_override_colors/font_focus_color = Color(0, 0, 0, 1)
+theme_override_colors/font_pressed_color = Color(0, 0, 0, 1)
+theme_override_fonts/font = ExtResource("3_qcbuv")
+theme_override_font_sizes/font_size = 55
+theme_override_styles/focus = SubResource("StyleBoxEmpty_k0oi5")
+theme_override_styles/hover = SubResource("StyleBoxEmpty_aug7r")
+theme_override_styles/pressed = SubResource("StyleBoxEmpty_i060o")
+theme_override_styles/normal = SubResource("StyleBoxEmpty_ou3kw")
+text = "←
+"
 
 [node name="MainContainer" type="Control" parent="UI"]
 layout_mode = 3
@@ -87,3 +113,5 @@ text = "Players"
 
 [node name="PlayersList" type="ItemList" parent="UI/MainContainer/VBox"]
 layout_mode = 2
+
+[connection signal="pressed" from="UI/background/back" to="." method="_on_back_pressed"]

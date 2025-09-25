@@ -16,6 +16,8 @@ var _attacker_spawn_global: Vector2 = Vector2.ZERO
 var _defender_spawn_global: Vector2 = Vector2.ZERO
 var _round_can_hit: bool = false
 var _attackers_used: Dictionary = {}
+var _slipper_seq: int = 0
+var _owner_slippers: Dictionary = {}
 
 func _ready() -> void:
 	# If game is set to SINGLEPLAYER, ensure no multiplayer peer is active (clear leftovers)
@@ -136,8 +138,7 @@ func _setup_networked_play() -> void:
 		spawner.add_spawnable_scene("res://scenes/networked_player.tscn")
 	if ResourceLoader.exists("res://scenes/slipper.tscn"):
 		spawner.add_spawnable_scene("res://scenes/slipper.tscn")
-	if ResourceLoader.exists("res://scenes/can.tscn"):
-		spawner.add_spawnable_scene("res://scenes/can.tscn")
+	# Can is present in the scene (world.tscn); it will replicate via its MultiplayerSynchronizer
 
 	# Connect multiplayer signals for dynamic joins/leaves
 	if not multiplayer.peer_connected.is_connected(self._on_peer_connected):
@@ -152,7 +153,9 @@ func _setup_networked_play() -> void:
 		print("[World] Server waiting for role assignment before spawning players")
 		# Roles should already be set by multiplayer_lobby.gd before scene change
 		call_deferred("_spawn_all_network_players")
-		call_deferred("_spawn_network_can")
+		call_deferred("_setup_can_authority")
+	# All peers ensure the local Can node has server authority set (safe if already set)
+	call_deferred("_setup_can_authority")
 
 func _spawn_all_network_players() -> void:
 	print("[World] Spawning all network players with roles")
@@ -197,6 +200,42 @@ func _spawn_all_network_players() -> void:
 	# Start round state (server only)
 	_round_begin_state()
 
+func _setup_can_authority() -> void:
+	# Ensure the server (peer 1) is the authority for the Can so its sync properties replicate
+	var can := _find_any_can()
+	if can:
+		can.set_multiplayer_authority(1)
+		var sync := can.get_node_or_null("MultiplayerSynchronizer")
+		if sync:
+			sync.set_multiplayer_authority(1)
+
+func _spawn_network_can() -> void:
+	if not multiplayer.is_server():
+		return
+	if can_scene == null:
+		return
+	var spawner: MultiplayerSpawner = get_node_or_null("NetworkSpawner")
+	if spawner == null:
+		return
+	var can := can_scene.instantiate()
+	can.name = "NetworkCan"
+	can.set_multiplayer_authority(multiplayer.get_unique_id())
+	var sync := can.get_node_or_null("MultiplayerSynchronizer")
+	if sync:
+		sync.set_multiplayer_authority(multiplayer.get_unique_id())
+	var parent_node: Node = tilemap if tilemap != null else (self as Node)
+	parent_node.add_child(can)
+	var spawn := can_spawn_position
+	if spawn == Vector2.ZERO:
+		spawn = _compute_default_can_spawn()
+	if tilemap:
+		can.global_position = tilemap.to_global(spawn)
+	else:
+		can.global_position = spawn
+	if "sync_position" in can:
+		can.set("sync_position", can.global_position)
+	spawner.spawn(can)
+
 func _spawn_network_player_with_role(peer_id: int, index: int, role: String) -> void:
 	var spawner: MultiplayerSpawner = get_node_or_null("NetworkSpawner")
 	if spawner == null or network_player_scene == null:
@@ -237,10 +276,8 @@ func _spawn_network_player_with_role(peer_id: int, index: int, role: String) -> 
 	# Initialize sync_position so remote sides don't lerp to (0,0)
 	if "sync_position" in player_inst:
 		player_inst.set("sync_position", spawn_pos)
-	
-	# Ask spawner to replicate this node to all clients
-	spawner.spawn(player_inst)
-	# RPC fallback: also tell all clients to spawn this player locally in case spawner misses
+
+	# Tell all clients to spawn this player locally
 	rpc("_rpc_spawn_remote_player", peer_id, role, spawn_pos)
 	# Ensure the newly spawned owner's camera becomes current on their client
 	rpc_id(peer_id, "_rpc_focus_local_camera")
@@ -413,35 +450,105 @@ func _rpc_spawn_slipper(pos: Vector2, dir: Vector2, power: float, owner_peer_id:
 	# Only the server performs the authoritative spawn
 	if not multiplayer.is_server():
 		return
-	var spawner: MultiplayerSpawner = get_node_or_null("NetworkSpawner")
-	if spawner == null:
+	# Instance and configure slipper (RPC-based replication)
+	var slipper_scene: PackedScene = preload("res://scenes/slipper.tscn") if ResourceLoader.exists("res://scenes/slipper.tscn") else null
+	if slipper_scene == null:
 		return
-	# Instance and configure slipper then replicate via spawner
+	# Enforce single active slipper per owner
+	var parent_node: Node = tilemap if tilemap != null else (self as Node)
+	if _owner_slippers.has(owner_peer_id):
+		var existing_name := String(_owner_slippers[owner_peer_id])
+		var existing := parent_node.get_node_or_null(existing_name)
+		if existing != null:
+			return
+		else:
+			_owner_slippers.erase(owner_peer_id)
+	var s: Node2D = slipper_scene.instantiate()
+	parent_node.add_child(s)
+	if s is Node2D:
+		(s as Node2D).global_position = pos
+	# Server authoritative physics: set authority to server (peer 1)
+	s.set_multiplayer_authority(1)
+	var s_sync := s.get_node_or_null("MultiplayerSynchronizer")
+	if s_sync:
+		s_sync.set_multiplayer_authority(1)
+	if s.has_method("init"):
+		s.init(dir, power)
+	# Give a stable name based on owner to avoid duplicates
+	var sl_name := "Slipper_%d" % int(owner_peer_id)
+	s.name = sl_name
+	_owner_slippers[owner_peer_id] = sl_name
+	# Hook despawn signals (server-side)
+	if s.has_signal("picked_up"):
+		s.connect("picked_up", Callable(self, "_on_network_slipper_picked").bind(owner_peer_id, sl_name))
+	if s.has_signal("ai_picked_up"):
+		s.connect("ai_picked_up", Callable(self, "_on_network_slipper_ai_picked").bind(sl_name))
+	# Tell clients to spawn the slipper locally
+	rpc("_rpc_spawn_remote_slipper", sl_name, pos, dir, power)
+	# Mark that this attacker has thrown (server authoritative round tracking)
+	_on_attacker_threw(owner_peer_id)
+
+
+
+func _on_network_slipper_picked(owner_peer_id: int, slipper_name: String) -> void:
+	# Server callback when a slipper is picked up: despawn everywhere and restore ammo
+	if not multiplayer.is_server():
+		return
+	var parent_node: Node = tilemap if tilemap != null else (self as Node)
+	var slipper := parent_node.get_node_or_null(slipper_name)
+	if slipper:
+		slipper.queue_free()
+	_owner_slippers.erase(owner_peer_id)
+	rpc("_rpc_despawn_remote_slipper", slipper_name)
+	var p := get_node_or_null("Player_%s" % owner_peer_id)
+	if p and p.has_method("_rpc_set_ammo"):
+		p.rpc_id(owner_peer_id, "_rpc_set_ammo", 1)
+
+func _on_network_slipper_ai_picked(slipper_name: String) -> void:
+	# Server callback when AI picks up a slipper: despawn everywhere
+	if not multiplayer.is_server():
+		return
+	var parent_node: Node = tilemap if tilemap != null else (self as Node)
+	var slipper := parent_node.get_node_or_null(slipper_name)
+	if slipper:
+		slipper.queue_free()
+	for k in _owner_slippers.keys():
+		if String(_owner_slippers[k]) == slipper_name:
+			_owner_slippers.erase(k)
+			break
+	rpc("_rpc_despawn_remote_slipper", slipper_name)
+
+@rpc("any_peer", "call_local", "reliable")
+func _rpc_spawn_remote_slipper(sl_name: String, pos: Vector2, dir: Vector2, power: float) -> void:
+	# Clients create the slipper locally with same name and authority
+	if multiplayer.is_server():
+		return
+	var parent_node: Node = tilemap if tilemap != null else (self as Node)
+	if parent_node.get_node_or_null(sl_name) != null:
+		return
 	var slipper_scene: PackedScene = preload("res://scenes/slipper.tscn") if ResourceLoader.exists("res://scenes/slipper.tscn") else null
 	if slipper_scene == null:
 		return
 	var s: Node2D = slipper_scene.instantiate()
-	var parent_node: Node = tilemap if tilemap != null else (self as Node)
+	s.name = sl_name
 	parent_node.add_child(s)
 	if s is Node2D:
 		(s as Node2D).global_position = pos
+	s.set_multiplayer_authority(1)
+	var s_sync2 := s.get_node_or_null("MultiplayerSynchronizer")
+	if s_sync2:
+		s_sync2.set_multiplayer_authority(1)
 	if s.has_method("init"):
 		s.init(dir, power)
-	# When slipper is picked up, restore the owner's ammo back to 1 (max stays 1)
-	if s.has_signal("picked_up"):
-		s.connect("picked_up", Callable(self, "_on_network_slipper_picked").bind(owner_peer_id))
-	# Replicate
-	spawner.spawn(s)
-	# Mark that this attacker has thrown (server authoritative round tracking)
-	_on_attacker_threw(owner_peer_id)
 
-func _on_network_slipper_picked(owner_peer_id: int) -> void:
-	# Server callback when a slipper is picked up: set owner's ammo back to 1
-	if not multiplayer.is_server():
+@rpc("any_peer", "call_local", "reliable")
+func _rpc_despawn_remote_slipper(slipper_name: String) -> void:
+	if multiplayer.is_server():
 		return
-	var p := get_node_or_null("Player_%s" % owner_peer_id)
-	if p and p.has_method("_rpc_set_ammo"):
-		p.rpc_id(owner_peer_id, "_rpc_set_ammo", 1)
+	var parent_node: Node = tilemap if tilemap != null else (self as Node)
+	var slipper := parent_node.get_node_or_null(slipper_name)
+	if slipper:
+		slipper.queue_free()
 
 func _on_node_added_connect_hud(n: Node) -> void:
 	if _hud_connected:

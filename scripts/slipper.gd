@@ -14,6 +14,10 @@ signal ai_picked_up
 var is_thrown: bool = true
 var on_ground: bool = false
 
+@export var sync_position: Vector2
+@export var sync_linear_velocity: Vector2
+@export var sync_rotation: float = 0.0
+
 func _ready() -> void:
 	if not is_in_group("slipper"):
 		add_to_group("slipper")
@@ -34,6 +38,27 @@ func _ready() -> void:
 	linear_damp = linear_damp_when_free
 	angular_damp = 1.5
 
+	# Setup replication config if a MultiplayerSynchronizer child exists
+	var sync := get_node_or_null("MultiplayerSynchronizer")
+	if sync:
+		var rc := SceneReplicationConfig.new()
+		var p_pos := NodePath(".:sync_position")
+		var p_lin := NodePath(".:sync_linear_velocity")
+		var p_rot := NodePath(".:sync_rotation")
+		rc.add_property(p_pos)
+		rc.add_property(p_lin)
+		rc.add_property(p_rot)
+		rc.property_set_replication_mode(p_pos, SceneReplicationConfig.REPLICATION_MODE_ALWAYS)
+		rc.property_set_replication_mode(p_lin, SceneReplicationConfig.REPLICATION_MODE_ALWAYS)
+		rc.property_set_replication_mode(p_rot, SceneReplicationConfig.REPLICATION_MODE_ALWAYS)
+		rc.property_set_spawn(p_pos, true)
+		rc.property_set_spawn(p_lin, true)
+		rc.property_set_spawn(p_rot, true)
+		sync.replication_config = rc
+		sync_position = global_position
+		sync_linear_velocity = linear_velocity
+		sync_rotation = rotation
+
 func init(dir: Vector2, power: float = 1.0) -> void:
 	# Initialize throw direction and set physics velocities
 	var d: Vector2 = dir
@@ -51,10 +76,23 @@ func _physics_process(delta: float) -> void:
 	if is_thrown and current_speed < ground_threshold:
 		on_ground = true
 		is_thrown = false
-	
+
 	# Align sprite to travel direction when moving
 	if current_speed > 1.0:
 		rotation = linear_velocity.angle()
+
+	# Server writes state, clients follow
+	var sync := get_node_or_null("MultiplayerSynchronizer")
+	if sync:
+		if multiplayer.is_server():
+			sync_position = global_position
+			sync_linear_velocity = linear_velocity
+			sync_rotation = rotation
+		else:
+			var alpha: float = clamp(delta * 10.0, 0.0, 1.0)
+			global_position = global_position.lerp(sync_position, alpha)
+			linear_velocity = linear_velocity.lerp(sync_linear_velocity, alpha)
+			rotation = lerp_angle(rotation, sync_rotation, alpha)
 
 func _on_body_entered(body: Node) -> void:
 	# If we hit a can, let physics handle the impulse. Optionally notify the can.
@@ -71,13 +109,15 @@ func _on_pickup_body_entered(body: Node) -> void:
 		
 	# Dedicated handler for the PickupArea -> only pick up when player overlaps the area
 	if body is CharacterBody2D and ("player" in String(body.name).to_lower() or body.has_method("_on_slipper_picked")):
-		emit_signal("picked_up")
-		queue_free()
+		# Only the server should decide pickup to avoid divergence
+		if multiplayer.is_server():
+			emit_signal("picked_up")
+			queue_free()
 
 func is_on_ground() -> bool:
 	return on_ground
-
 func ai_pickup() -> void:
-	# Called when AI reaches the slipper first
-	emit_signal("ai_picked_up")
-	queue_free()
+	# Only the server should decide pickup to avoid divergence
+	if multiplayer.is_server():
+		emit_signal("ai_picked_up")
+		queue_free()

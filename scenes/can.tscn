@@ -10,6 +10,8 @@ size = Vector2(23, 29)
 mass = 0.3
 script = ExtResource("2_script")
 
+[node name="MultiplayerSynchronizer" type="MultiplayerSynchronizer" parent="."]
+
 [node name="CollisionShape2D" type="CollisionShape2D" parent="."]
 position = Vector2(-0.5, 0.5)
 shape = SubResource("1_rect")

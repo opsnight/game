@@ -90,3 +90,5 @@ text = "Local (Offline)"
 layout_mode = 2
 theme_override_fonts/font = ExtResource("3_gk2da")
 text = "Back"
+
+[connection signal="pressed" from="UI/Panel/background/back" to="." method="_on_back_pressed"]
