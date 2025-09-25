@@ -163,7 +163,7 @@ func _spawn_all_network_players() -> void:
 		return
 	
 	# Get all peer IDs (server + clients)
-	var all_peers: Array = [1]  # Server is always peer 1
+	var all_peers: Array[int] = [1]  # Server is always peer 1
 	for pid in multiplayer.get_peers():
 		all_peers.append(pid)
 	
@@ -173,7 +173,12 @@ func _spawn_all_network_players() -> void:
 	var roles: Dictionary = {}
 	if Engine.has_singleton("GameConfig"):
 		roles = GameConfig.roles if "roles" in GameConfig else {}
-	
+	# If roles are missing or do not match player count, assign now (server authoritative)
+	if roles.is_empty() or roles.size() != all_peers.size():
+		roles = _assign_player_roles()
+	else:
+		# Ensure all clients know their roles
+		rpc("_rpc_update_roles_client_side", roles)
 	print("[World] Roles assigned: ", roles)
 
 	# Build attacker-local indices so attackers spread neatly at the attacker spawn
@@ -199,6 +204,45 @@ func _spawn_all_network_players() -> void:
 
 	# Start round state (server only)
 	_round_begin_state()
+
+func _assign_player_roles() -> Dictionary:
+	# Server-authoritative role assignment:
+	# - 2 players: host (peer 1) = 'thrower', client = 'defender'
+	# - 3+ players: randomly choose 1 defender; rest are 'thrower'
+	if not multiplayer.is_server():
+		return {}
+	# Build peer list (server + clients)
+	var all_peers: Array[int] = [1]
+	for pid in multiplayer.get_peers():
+		all_peers.append(pid)
+	all_peers.sort()
+	var roles: Dictionary = {}
+	var count := all_peers.size()
+	if count == 2:
+		for pid in all_peers:
+			roles[pid] = "thrower" if pid == 1 else "defender"
+	elif count >= 3:
+		var rng := RandomNumberGenerator.new()
+		rng.randomize()
+		var defender_peer: int = all_peers[rng.randi_range(0, all_peers.size() - 1)]
+		for pid in all_peers:
+			roles[pid] = "defender" if pid == defender_peer else "thrower"
+	else:
+		roles[1] = "thrower"
+	# Persist and broadcast
+	if Engine.has_singleton("GameConfig"):
+		GameConfig.clear_roles()
+		GameConfig.roles = roles.duplicate(true)
+	rpc("_rpc_update_roles_client_side", roles)
+	return roles
+
+func _roles_have_one_defender(roles: Dictionary) -> bool:
+	# Helper to ensure exactly one defender is present in the roles map
+	var count := 0
+	for pid in roles.keys():
+		if String(roles[pid]).to_lower() == "defender":
+			count += 1
+	return count == 1
 
 func _setup_can_authority() -> void:
 	# Ensure the server (peer 1) is the authority for the Can so its sync properties replicate
@@ -410,17 +454,26 @@ func _on_peer_connected(peer_id: int) -> void:
 		if get_node_or_null("Player_%s" % peer_id) != null:
 			print("[World] Peer ", peer_id, " already spawned; skipping")
 			return
-		# Get role for this peer
-		var role := "thrower"
+		# Ensure roles include this peer and exactly one defender; reassign if needed
+		var roles: Dictionary = {}
 		if Engine.has_singleton("GameConfig"):
-			var roles := GameConfig.roles if "roles" in GameConfig else {}
-			if roles is Dictionary and roles.has(peer_id):
-				role = String(roles[peer_id])
+			roles = GameConfig.roles if "roles" in GameConfig else {}
+		var expected_count := multiplayer.get_peers().size() + 1
+		var needs_reassign := roles.is_empty() or not roles.has(peer_id) or roles.size() != expected_count or not _roles_have_one_defender(roles)
+		var did_reassign := false
+		if needs_reassign:
+			roles = _assign_player_roles()
+			did_reassign = true
+		var role: String = String(roles.get(peer_id, "thrower"))
 		
 		print("[World] Spawning new peer ", peer_id, " as ", role)
 		# Spawn the new player with their role
 		var index = multiplayer.get_peers().size()  # Use current peer count as index
 		_spawn_network_player_with_role(peer_id, index, role)
+		# If we reassigned roles due to this join, reposition everyone and start a fresh round
+		if did_reassign:
+			_reposition_players_after_role_change()
+			_round_begin_state()
 
 func _on_peer_disconnected(peer_id: int) -> void:
 	print("[World] Peer disconnected: ", peer_id)
@@ -428,6 +481,13 @@ func _on_peer_disconnected(peer_id: int) -> void:
 	var player_node = get_node_or_null("Player_%s" % peer_id)
 	if player_node:
 		player_node.queue_free()
+	# Re-evaluate roles to ensure exactly one defender remains
+	if multiplayer.is_server():
+		var peers_left := multiplayer.get_peers().size() + 1
+		if peers_left >= 2:
+			_assign_player_roles()
+			_reposition_players_after_role_change()
+			_round_begin_state()
 
 func _on_server_disconnected() -> void:
 	print("[World] Server disconnected")

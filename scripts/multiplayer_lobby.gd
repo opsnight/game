@@ -167,6 +167,3 @@ func _is_valid_ipv4(ip: String) -> bool:
 		if n < 0 or n > 255:
 			return false
 	return true
-
-func _on_back_pressed() -> void:
-	get_tree().change_scene_to_file("res://scenes/game_selection.tscn")

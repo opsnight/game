@@ -9,9 +9,15 @@ extends CharacterBody2D
 var is_local_player: bool = false
 var _anim: AnimatedSprite2D
 var _camera: Camera2D
-
-@export var role: String = "thrower" : set = set_role # "defender" | "thrower" | "spectator"
-
+var _default_frames: SpriteFrames = null
+var _defender_frames: SpriteFrames = null
+var _role: String = "thrower"
+@export var role: String:
+	get:
+		return _role
+	set(value):
+		_role = value
+		_apply_role_visual()
 const SPEED := 100.0
 const ACCELERATION := 1500.0
 const FRICTION := 1200.0
@@ -40,6 +46,7 @@ func _ready() -> void:
 		self.z_index = 200
 		_anim.z_index = 200
 		_anim.visible = true
+		_default_frames = _anim.sprite_frames
 	_apply_role_visual()
 	_setup_multiplayer_sync()
 	_update_local_authority_state()
@@ -48,9 +55,6 @@ func _ready() -> void:
 	if is_local_player:
 		ammo_changed.emit(slippers_available, MAX_SLIPPERS)
 
-func set_role(v: String) -> void:
-	role = v
-	_apply_role_visual()
 
 func _physics_process(delta: float) -> void:
 	# Keep authority detection updated (handles network timing cases)
@@ -207,6 +211,21 @@ func _apply_role_visual() -> void:
 			_anim.self_modulate = Color(0.75, 0.75, 0.75, 1.0) # gray
 		_:
 			_anim.self_modulate = Color(1,1,1,1)
+	# Swap sprite frames to Player 2 for defender role, otherwise keep default
+	if role.to_lower() == "defender":
+		if _defender_frames == null:
+			var p2_scene := load("res://scenes/player_2.tscn")
+			if p2_scene and p2_scene is PackedScene:
+				var inst: Node = (p2_scene as PackedScene).instantiate()
+				var p2_anim := inst.get_node_or_null("AnimatedSprite2D") as AnimatedSprite2D
+				if p2_anim and p2_anim.sprite_frames:
+					_defender_frames = p2_anim.sprite_frames.duplicate()
+				inst.queue_free()
+		if _defender_frames:
+			_anim.sprite_frames = _defender_frames
+	else:
+		if _default_frames:
+			_anim.sprite_frames = _default_frames
 
 @rpc("any_peer", "call_local", "reliable")
 func _rpc_gain_ammo() -> void:
@@ -237,14 +256,37 @@ func _play_anim_state(is_moving: bool, is_running: bool) -> void:
 		desired = ("front_run" if is_running else ("front_walk" if is_moving else "front_idle"))
 	var frames := _anim.sprite_frames
 	if frames:
-		if not frames.has_animation(desired):
-			# Fallback to walk if run animations are not present in this scene
-			if desired == "front_run":
-				desired = "front_walk"
-			elif desired == "back_run":
-				desired = "back_walk"
+		desired = _resolve_anim_name(desired)
 		if frames.has_animation(desired) and _anim.animation != desired:
 			_anim.play(desired)
+
+# Animation name resolver to support both 'back_*'/'front_*' and 'b_*'/'f_*' sets
+func _resolve_anim_name(base: String) -> String:
+	if _anim == null:
+		return base
+	var frames := _anim.sprite_frames
+	if frames == null:
+		return base
+	if frames.has_animation(base):
+		return base
+	var map := {
+		"back_idle": "b_idle",
+		"back_walk": "b_walk",
+		"back_run": "b_run",
+		"front_idle": "f_idle",
+		"front_walk": "f_walk",
+		"front_run": "f_run"
+	}
+	if map.has(base) and frames.has_animation(map[base]):
+		return map[base]
+	if frames.has_animation("front_idle"):
+		return "front_idle"
+	if frames.has_animation("f_idle"):
+		return "f_idle"
+	var names := frames.get_animation_names()
+	if names.size() > 0:
+		return String(names[0])
+	return base
 
 # --- Synchronization ---
 func _setup_multiplayer_sync() -> void:

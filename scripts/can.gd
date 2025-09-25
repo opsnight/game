@@ -24,6 +24,8 @@ func _ready() -> void:
 	continuous_cd = RigidBody2D.CCD_MODE_CAST_SHAPE
 	linear_damp = 6.0
 	angular_damp = 6.0
+	# Top-down game: disable gravity so the can doesn't fall "down"
+	gravity_scale = 0.0
 	# Help prevent tunneling on hard hits
 	set_deferred("continuous_cd", true)
 	if not is_in_group("can"):

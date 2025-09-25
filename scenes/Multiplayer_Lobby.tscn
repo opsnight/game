@@ -8,13 +8,13 @@
 texture = ExtResource("2_jmixo")
 modulate_color = Color(0.385493, 0.385492, 0.385492, 1)
 
+[sub_resource type="StyleBoxEmpty" id="StyleBoxEmpty_qcbuv"]
+
 [sub_resource type="StyleBoxEmpty" id="StyleBoxEmpty_k0oi5"]
 
 [sub_resource type="StyleBoxEmpty" id="StyleBoxEmpty_aug7r"]
 
 [sub_resource type="StyleBoxEmpty" id="StyleBoxEmpty_i060o"]
-
-[sub_resource type="StyleBoxEmpty" id="StyleBoxEmpty_ou3kw"]
 
 [node name="MultiplayerLobby" type="Node2D"]
 script = ExtResource("1")
@@ -38,20 +38,20 @@ grow_horizontal = 2
 grow_vertical = 2
 theme_override_styles/panel = SubResource("StyleBoxTexture_qcbuv")
 
-[node name="back" type="Button" parent="UI/background"]
-offset_right = 89.0
-offset_bottom = 81.0
-size_flags_vertical = 3
+[node name="Button" type="Button" parent="UI/background"]
+layout_mode = 0
+offset_right = 8.0
+offset_bottom = 8.0
 theme_override_colors/font_hover_color = Color(0, 0, 0, 1)
 theme_override_colors/font_color = Color(0, 0, 0, 1)
 theme_override_colors/font_focus_color = Color(0, 0, 0, 1)
 theme_override_colors/font_pressed_color = Color(0, 0, 0, 1)
 theme_override_fonts/font = ExtResource("3_qcbuv")
-theme_override_font_sizes/font_size = 55
-theme_override_styles/focus = SubResource("StyleBoxEmpty_k0oi5")
-theme_override_styles/hover = SubResource("StyleBoxEmpty_aug7r")
-theme_override_styles/pressed = SubResource("StyleBoxEmpty_i060o")
-theme_override_styles/normal = SubResource("StyleBoxEmpty_ou3kw")
+theme_override_font_sizes/font_size = 50
+theme_override_styles/focus = SubResource("StyleBoxEmpty_qcbuv")
+theme_override_styles/hover = SubResource("StyleBoxEmpty_k0oi5")
+theme_override_styles/pressed = SubResource("StyleBoxEmpty_aug7r")
+theme_override_styles/normal = SubResource("StyleBoxEmpty_i060o")
 text = "←
 "
 
@@ -113,5 +113,3 @@ text = "Players"
 
 [node name="PlayersList" type="ItemList" parent="UI/MainContainer/VBox"]
 layout_mode = 2
-
-[connection signal="pressed" from="UI/background/back" to="." method="_on_back_pressed"]
