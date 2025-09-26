@@ -173,6 +173,10 @@ func _try_catch() -> void:
 			emit_signal("caught_player")
 			if player.has_method("play_hurt_from"):
 				player.play_hurt_from(global_position)
+		# Show caught UI if UI manager present (local mode)
+		var ui := get_tree().current_scene.find_child("UIManager", true, false)
+		if ui and ui.has_method("show_caught_modal"):
+			ui.show_caught_modal()
 
 func _try_catch_punch() -> void:
 	# Catch only if Player 1 is vulnerable (red aura) and can has been returned
@@ -191,6 +195,9 @@ func _try_catch_punch() -> void:
 		emit_signal("caught_player")
 		if player.has_method("play_hurt_from"):
 			player.play_hurt_from(global_position)
+		var ui2 := get_tree().current_scene.find_child("UIManager", true, false)
+		if ui2 and ui2.has_method("show_caught_modal"):
+			ui2.show_caught_modal()
 	else:
 		print("[P2] Punch missed: out of range (d=", global_position.distance_to((player as Node2D).global_position), ")")
 

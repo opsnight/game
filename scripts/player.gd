@@ -31,6 +31,7 @@ var base_center: Vector2
 var can_leave_base: bool = false
 var at_base: bool = true
 var is_vulnerable: bool = false
+var must_return_to_base: bool = false
 
 # Overlay options (affect ONLY this player's sprite)
 @export_enum("none", "green", "red", "blue", "pink") var overlay_variant: String = "none"
@@ -279,6 +280,11 @@ func _throw_slipper() -> void:
 			s.global_position = global_position + dir_vec.normalized() * 32.0
 			if s.has_method("init"):
 				s.init(dir_vec)
+			# Avoid immediate self-collision that can catapult the slipper
+			if s.has_method("ignore_body_temporarily"):
+				s.ignore_body_temporarily(self, 0.25)
+			elif s.has_method("add_collision_exception_with"):
+				s.add_collision_exception_with(self)
 			if s.has_signal("picked_up"):
 				s.connect("picked_up", Callable(self, "_on_slipper_picked"))
 			slippers_available = max(0, slippers_available - 1)
@@ -340,6 +346,11 @@ func _throw_slipper_dir(dir_vec: Vector2, power_mult: float = 1.0) -> void:
 			s.global_position = global_position + dir_vec.normalized() * 32.0
 			if s.has_method("init"):
 				s.init(dir_vec, power_mult)
+			# Avoid immediate self-collision that can catapult the slipper
+			if s.has_method("ignore_body_temporarily"):
+				s.ignore_body_temporarily(self, 0.25)
+			elif s.has_method("add_collision_exception_with"):
+				s.add_collision_exception_with(self)
 			if s.has_signal("picked_up"):
 				s.connect("picked_up", Callable(self, "_on_slipper_picked"))
 			slippers_available = max(0, slippers_available - 1)
@@ -531,14 +542,20 @@ func _update_base_state() -> void:
 			if d > base_radius + 1.0:
 				slipper_outside = true
 				break
+	# Movement gate: still only allow leaving base if a slipper is actually outside
 	can_leave_base = slipper_outside
 
 	var was_at_base := at_base
 	at_base = (global_position.distance_to(base_center) <= base_radius + 0.5)
-	# Vulnerable when we've thrown (slipper outside) and are outside base
-	is_vulnerable = (can_leave_base and not at_base)
-	# If we just re-entered base and no slipper is outside, re-lock and emit
-	if at_base and not was_at_base and not can_leave_base:
+	# Persist vulnerability until we return to base, even after retrieving the slipper
+	if slipper_outside:
+		must_return_to_base = true
+	if at_base:
+		must_return_to_base = false
+	# Vulnerable if we must return and we're not at base yet
+	is_vulnerable = (must_return_to_base and not at_base)
+	# Emit when we re-enter base (safe again)
+	if at_base and not was_at_base:
 		returned_to_base.emit()
 
 func _update_vulnerability_visual() -> void:

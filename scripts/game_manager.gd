@@ -58,7 +58,8 @@ func _on_ai_caught_slipper() -> void:
 		rpc("_rpc_sync_game_over", score)
 
 func add_score(points: int) -> void:
-	if not multiplayer.is_server():
+	# Allow offline scoring; in networked sessions only server scores
+	if _is_networked() and not multiplayer.is_server():
 		return
 	if not game_active:
 		return
@@ -66,16 +67,32 @@ func add_score(points: int) -> void:
 	score += points
 	emit_signal("score_changed", score)
 	emit_signal("can_hit")
+	# Local-only: give a small camera shake on can hits
+	if not _is_networked():
+		_call_deferred_shake()
 	if _is_networked():
 		rpc("_rpc_sync_score", score)
 
 func restart_game() -> void:
-	if not multiplayer.is_server():
-		if _is_networked():
-			rpc_id(1, "_rpc_request_restart")
-		return
+    # In networked mode, only server performs restart; offline proceeds locally
+    if _is_networked() and not multiplayer.is_server():
+        rpc_id(1, "_rpc_request_restart")
+        return
 	
-	_apply_restart_state()
+    _apply_restart_state()
+    # Ask world to reset round positions/state immediately
+    var world := get_tree().current_scene
+    if world and world.has_method("_reset_round"):
+        world._reset_round()
+	# Reload current game scene to reset everything to start state (offline)
+    if not _is_networked():
+		if game_scene != null:
+			get_tree().change_scene_to_packed(game_scene)
+		else:
+			# Fallback: reload current scene by path
+			var path := get_tree().current_scene.scene_file_path
+			if path != "" and ResourceLoader.exists(path):
+				get_tree().change_scene_to_file(path)
 	if _is_networked():
 		rpc("_rpc_sync_restart")
 
@@ -104,6 +121,22 @@ func _apply_restart_state() -> void:
 	# Hide game over UI
 	if ui_manager and ui_manager.has_method("hide_game_over"):
 		ui_manager.hide_game_over()
+
+func _call_deferred_shake() -> void:
+	call_deferred("_shake_camera", 6.0, 0.25)
+
+func _shake_camera(intensity: float = 6.0, duration: float = 0.25) -> void:
+	var cam: Camera2D = get_viewport().get_camera_2d()
+	if cam == null:
+		return
+	var original_offset: Vector2 = cam.offset
+	var steps: int = max(1, int(ceil(duration / 0.04)))
+	var rng := RandomNumberGenerator.new()
+	rng.randomize()
+	for i in range(steps):
+		cam.offset = Vector2(rng.randf_range(-1.0, 1.0), rng.randf_range(-1.0, 1.0)) * intensity
+		await get_tree().create_timer(0.04).timeout
+	cam.offset = original_offset
 
 func set_ui_manager(ui: Node) -> void:
 	ui_manager = ui

@@ -65,6 +65,10 @@ func _ready() -> void:
 	_create_or_place_can()
 	_dedupe_cans_keep_rightmost()
 
+	# Round intro in offline presentation mode
+	if not _is_networked():
+		call_deferred("_run_round_intro")
+
 	# LAN must have NO AI; remove any Defender AI if present when networked
 	if _is_networked():
 		var existing_defender = get_tree().get_first_node_in_group("defender")
@@ -77,6 +81,12 @@ func _ready() -> void:
 
 	# Create game manager and UI
 	_create_game_systems()
+	# Ensure the game manager knows how to reload this scene on restart
+	var gm := get_tree().get_first_node_in_group("game_manager")
+	if gm and "game_scene" in gm:
+		var scene_path := get_tree().current_scene.scene_file_path
+		if scene_path != "" and ResourceLoader.exists(scene_path):
+			gm.set("game_scene", load(scene_path))
 
 	# Ensure a camera is active and following a player in offline mode
 	if not _is_networked():
@@ -707,6 +717,8 @@ func _create_game_systems() -> void:
 		# Also listen for can hits to manage rounds
 		if game_manager.has_signal("can_hit"):
 			game_manager.connect("can_hit", Callable(self, "_on_can_hit"))
+			# Optional slow-mo impact
+			game_manager.connect("can_hit", Callable(self, "_on_can_hit_slowmo"))
 
 func _reset_round() -> void:
 	var p1 := get_node_or_null("TileMap/player")
@@ -715,6 +727,8 @@ func _reset_round() -> void:
 	if p1 and p1 is Node:
 		if "base_center" in p1 and p1 is Node2D:
 			(p1 as Node2D).global_position = p1.base_center
+		if "must_return_to_base" in p1:
+			p1.must_return_to_base = false
 		if "slippers_available" in p1 and "MAX_SLIPPERS" in p1:
 			p1.slippers_available = p1.MAX_SLIPPERS
 			if p1.has_signal("ammo_changed"):
@@ -725,6 +739,11 @@ func _reset_round() -> void:
 			p1.is_vulnerable = false
 		if p1.has_node("AnimatedSprite2D"):
 			p1.get_node("AnimatedSprite2D").modulate = Color(1,1,1)
+		# Reset camera to follow p1 if needed
+		var cam1: Camera2D = p1.get_node_or_null("Camera2D")
+		if cam1:
+			cam1.enabled = true
+			cam1.make_current()
 	# Clear all slippers in the scene
 	for n in get_tree().get_nodes_in_group("slipper"):
 		if n is Node:
@@ -736,8 +755,13 @@ func _reset_round() -> void:
 			can.end_carry()
 		if can.has_method("reset_to_original"):
 			can.reset_to_original()
+		if can.has_method("restore"):
+			can.restore()
 	# Ensure Player 2 stops attack/chase state
 	if p2:
+		# Return Player 2 to initial spawn if cached
+		if _defender_spawn_global != Vector2.ZERO and p2 is Node2D:
+			(p2 as Node2D).global_position = _defender_spawn_global
 		if "can_chase_player" in p2:
 			p2.can_chase_player = false
 		if "is_attacking" in p2:
@@ -888,6 +912,31 @@ func _on_can_hit() -> void:
 		return
 	_round_can_hit = true
 	_round_begin_state()
+
+func _on_can_hit_slowmo() -> void:
+	if not Engine.has_singleton("GameConfig"):
+		return
+	if not GameConfig.presentation_pack:
+		return
+	# Brief slow-motion
+	var old_scale := Engine.time_scale
+	Engine.time_scale = 0.8
+	await get_tree().create_timer(0.25).timeout
+	Engine.time_scale = old_scale
+
+func _run_round_intro() -> void:
+	if not Engine.has_singleton("GameConfig"):
+		return
+	if not GameConfig.presentation_pack:
+		return
+	# Simple zoom-in on player area
+	var cam := get_viewport().get_camera_2d()
+	if cam == null:
+		return
+	var old_zoom := cam.zoom
+	cam.zoom = old_zoom * 1.2
+	await get_tree().create_timer(0.25).timeout
+	cam.zoom = old_zoom
 
 func _get_attackers_list() -> Array:
 	var out: Array = []

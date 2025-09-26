@@ -92,7 +92,12 @@ func _restore_can() -> void:
 	if distance < 30.0:
 		# Close enough to restore can
 		can_node.global_position = can_original_position
-		if can_node.has_method("restore"):
+		# Place the can back using its pre-hit rotation to match prior orientation
+		if can_node.has_method("restore_with_pre_hit_rotation"):
+			can_node.restore_with_pre_hit_rotation()
+		elif can_node.has_method("restore_lying"):
+			can_node.restore_lying()
+		elif can_node.has_method("restore"):
 			can_node.restore()
 		state = "idle"
 	else:

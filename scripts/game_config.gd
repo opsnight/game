@@ -15,3 +15,6 @@ func clear_roles() -> void:
 
 # Future extension points
 var difficulty: String = "normal"  # easy, normal, hard
+
+# Presentation toggles
+var presentation_pack: bool = true

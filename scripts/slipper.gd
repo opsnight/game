@@ -9,14 +9,20 @@ signal ai_picked_up
 @export var angular_spin: float = 6.0
 @export var pickup_radius: float = 24.0
 @export var ground_threshold: float = 50.0  # Speed below which slipper is considered "on ground"
+@export var pickup_cooldown: float = 0.25  # Seconds after throw before pickup allowed
 
 @onready var pickup_area: Area2D = get_node_or_null("PickupArea")
 var is_thrown: bool = true
 var on_ground: bool = false
+var _spawn_time_s: float = 0.0
 
 @export var sync_position: Vector2
 @export var sync_linear_velocity: Vector2
 @export var sync_rotation: float = 0.0
+
+# World bounds helpers
+var _tilemap: TileMap = null
+var _bounds_inset: float = 10.0
 
 func _ready() -> void:
 	if not is_in_group("slipper"):
@@ -34,9 +40,23 @@ func _ready() -> void:
 		pickup_area.collision_mask = 0x7FFFFFFF
 	# No gravity in top-down
 	gravity_scale = 0.0
+	# Reduce tunneling through walls/objects
+	continuous_cd = RigidBody2D.CCD_MODE_CAST_SHAPE
+	set_deferred("continuous_cd", true)
 	# Let the body slow down naturally
 	linear_damp = linear_damp_when_free
 	angular_damp = 1.5
+
+	# Gentle ricochet off walls if they have collision shapes
+	var mat := PhysicsMaterial.new()
+	mat.bounce = 0.25
+	mat.friction = 0.9
+	physics_material_override = mat
+	# Mark spawn time for pickup cooldown
+	_spawn_time_s = float(Time.get_ticks_msec()) / 1000.0
+
+	# Cache tilemap for bounds clamping (group should be set by world scene)
+	_tilemap = get_tree().get_first_node_in_group("world_tilemap")
 
 	# Setup replication config if a MultiplayerSynchronizer child exists
 	var sync := get_node_or_null("MultiplayerSynchronizer")
@@ -55,9 +75,20 @@ func _ready() -> void:
 		rc.property_set_spawn(p_lin, true)
 		rc.property_set_spawn(p_rot, true)
 		sync.replication_config = rc
+		# Defer initial sync snapshot until after parent sets transform (only when networked)
+		if _is_networked():
+			call_deferred("_init_sync_snapshot")
+
+func _init_sync_snapshot() -> void:
+	var sync := get_node_or_null("MultiplayerSynchronizer")
+	if sync:
 		sync_position = global_position
 		sync_linear_velocity = linear_velocity
 		sync_rotation = rotation
+
+func _is_networked() -> bool:
+	var mp := get_tree().get_multiplayer()
+	return mp != null and mp.multiplayer_peer != null
 
 func init(dir: Vector2, power: float = 1.0) -> void:
 	# Initialize throw direction and set physics velocities
@@ -69,6 +100,18 @@ func init(dir: Vector2, power: float = 1.0) -> void:
 	# Give a little spin for visual appeal
 	angular_velocity = sign(d.x) * angular_spin
 	rotation = linear_velocity.angle()
+	# Nudge slightly forward to avoid overlapping the thrower collider
+	global_position += dir.normalized() * 2.0
+
+func ignore_body_temporarily(body: Node, seconds: float = 0.25) -> void:
+	if body == null:
+		return
+	if has_method("add_collision_exception_with"):
+		add_collision_exception_with(body)
+		var t := get_tree().create_timer(max(0.01, seconds))
+		await t.timeout
+		if is_inside_tree() and has_method("remove_collision_exception_with"):
+			remove_collision_exception_with(body)
 
 func _physics_process(delta: float) -> void:
 	# Check if slipper has slowed down enough to be considered "on ground"
@@ -83,7 +126,7 @@ func _physics_process(delta: float) -> void:
 
 	# Server writes state, clients follow
 	var sync := get_node_or_null("MultiplayerSynchronizer")
-	if sync:
+	if sync and _is_networked():
 		if multiplayer.is_server():
 			sync_position = global_position
 			sync_linear_velocity = linear_velocity
@@ -94,6 +137,9 @@ func _physics_process(delta: float) -> void:
 			linear_velocity = linear_velocity.lerp(sync_linear_velocity, alpha)
 			rotation = lerp_angle(rotation, sync_rotation, alpha)
 
+	# Clamp inside world bounds if available
+	_clamp_inside_bounds()
+
 func _on_body_entered(body: Node) -> void:
 	# If we hit a can, let physics handle the impulse. Optionally notify the can.
 	if body and body.is_in_group("can"):
@@ -103,14 +149,15 @@ func _on_body_entered(body: Node) -> void:
 		return
 
 func _on_pickup_body_entered(body: Node) -> void:
-	# Only allow pickup when slipper is on ground
-	if not on_ground:
+	# Allow pickup after a short cooldown (no need to wait until fully stopped)
+	var now_s: float = float(Time.get_ticks_msec()) / 1000.0
+	if now_s - _spawn_time_s < pickup_cooldown:
 		return
 		
 	# Dedicated handler for the PickupArea -> only pick up when player overlaps the area
 	if body is CharacterBody2D and ("player" in String(body.name).to_lower() or body.has_method("_on_slipper_picked")):
-		# Only the server should decide pickup to avoid divergence
-		if multiplayer.is_server():
+		# In networked games, only the server decides pickup; offline picks up locally
+		if (not _is_networked()) or multiplayer.is_server():
 			emit_signal("picked_up")
 			queue_free()
 
@@ -121,3 +168,30 @@ func ai_pickup() -> void:
 	if multiplayer.is_server():
 		emit_signal("ai_picked_up")
 		queue_free()
+
+func _clamp_inside_bounds() -> void:
+	if _tilemap == null:
+		# Try to resolve lazily
+		_tilemap = get_tree().get_first_node_in_group("world_tilemap")
+		if _tilemap == null:
+			var root := get_tree().current_scene
+			if root:
+				for child in root.get_children():
+					if child is TileMap:
+						_tilemap = child
+						break
+			if _tilemap == null:
+				return
+	var used_rect: Rect2i = _tilemap.get_used_rect()
+	if used_rect.size == Vector2i.ZERO:
+		return
+	var ts: Vector2i = _tilemap.tile_set.tile_size
+	var left := float(used_rect.position.x * ts.x) + _bounds_inset
+	var top := float(used_rect.position.y * ts.y) + _bounds_inset
+	var right := float((used_rect.position.x + used_rect.size.x) * ts.x) - _bounds_inset
+	var bottom := float((used_rect.position.y + used_rect.size.y) * ts.y) - _bounds_inset
+	# Work in TileMap local space
+	var local_pos: Vector2 = (_tilemap.to_local(global_position))
+	var clamped := Vector2(clamp(local_pos.x, left, right), clamp(local_pos.y, top, bottom))
+	if clamped != local_pos:
+		global_position = _tilemap.to_global(clamped)
