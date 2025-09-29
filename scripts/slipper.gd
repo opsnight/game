@@ -7,9 +7,9 @@ signal ai_picked_up
 @export var speed: float = 800.0
 @export var linear_damp_when_free: float = 4.0
 @export var angular_spin: float = 6.0
-@export var pickup_radius: float = 24.0
+@export var pickup_radius: float = 40.0
 @export var ground_threshold: float = 50.0  # Speed below which slipper is considered "on ground"
-@export var pickup_cooldown: float = 0.25  # Seconds after throw before pickup allowed
+@export var pickup_cooldown: float = 0.0  # Seconds after throw before pickup allowed (0 = instant)
 
 @onready var pickup_area: Area2D = get_node_or_null("PickupArea")
 var is_thrown: bool = true
@@ -38,6 +38,16 @@ func _ready() -> void:
 		pickup_area.body_entered.connect(Callable(self, "_on_pickup_body_entered"))
 		# Ensure the area can detect most bodies regardless of project layers
 		pickup_area.collision_mask = 0x7FFFFFFF
+		pickup_area.monitoring = true
+		# Ensure the pickup circle has a proper radius
+		var pc: CollisionShape2D = pickup_area.get_node_or_null("PickupCollision")
+		if pc:
+			if pc.shape == null:
+				var circ := CircleShape2D.new()
+				circ.radius = pickup_radius
+				pc.shape = circ
+			elif pc.shape is CircleShape2D:
+				(pc.shape as CircleShape2D).radius = pickup_radius
 	# No gravity in top-down
 	gravity_scale = 0.0
 	# Reduce tunneling through walls/objects
@@ -140,6 +150,8 @@ func _physics_process(delta: float) -> void:
 	# Clamp inside world bounds if available
 	_clamp_inside_bounds()
 
+	# Manual grab: do not auto-pickup via polling; handled by server RPC in world.gd
+
 func _on_body_entered(body: Node) -> void:
 	# If we hit a can, let physics handle the impulse. Optionally notify the can.
 	if body and body.is_in_group("can"):
@@ -149,17 +161,19 @@ func _on_body_entered(body: Node) -> void:
 		return
 
 func _on_pickup_body_entered(body: Node) -> void:
-	# Allow pickup after a short cooldown (no need to wait until fully stopped)
-	var now_s: float = float(Time.get_ticks_msec()) / 1000.0
-	if now_s - _spawn_time_s < pickup_cooldown:
-		return
-		
-	# Dedicated handler for the PickupArea -> only pick up when player overlaps the area
-	if body is CharacterBody2D and ("player" in String(body.name).to_lower() or body.has_method("_on_slipper_picked")):
-		# In networked games, only the server decides pickup; offline picks up locally
-		if (not _is_networked()) or multiplayer.is_server():
-			emit_signal("picked_up")
-			queue_free()
+	# Manual grab required now; this callback no longer auto-picks up the slipper.
+	# Kept for future UI prompts when a player is in range.
+	pass
+
+func _is_valid_player_body(body: Node) -> bool:
+	if body is CharacterBody2D:
+		var nm := String(body.name).to_lower()
+		if nm.find("player") != -1:
+			return true
+		# Support named networked players and possible future tags
+		if body.has_method("_on_slipper_picked"):
+			return true
+	return false
 
 func is_on_ground() -> bool:
 	return on_ground

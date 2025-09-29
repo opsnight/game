@@ -38,10 +38,10 @@ grow_horizontal = 2
 grow_vertical = 2
 theme_override_styles/panel = SubResource("StyleBoxTexture_qcbuv")
 
-[node name="Button" type="Button" parent="UI/background"]
+[node name="Back Button" type="Button" parent="UI/background"]
 layout_mode = 0
-offset_right = 8.0
-offset_bottom = 8.0
+offset_right = 65.0
+offset_bottom = 67.0
 theme_override_colors/font_hover_color = Color(0, 0, 0, 1)
 theme_override_colors/font_color = Color(0, 0, 0, 1)
 theme_override_colors/font_focus_color = Color(0, 0, 0, 1)
@@ -113,3 +113,5 @@ text = "Players"
 
 [node name="PlayersList" type="ItemList" parent="UI/MainContainer/VBox"]
 layout_mode = 2
+
+[connection signal="pressed" from="UI/background/Back Button" to="." method="_on_back_button_pressed"]

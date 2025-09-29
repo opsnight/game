@@ -11,7 +11,11 @@ var game_active: bool = true
 var ui_manager: Node = null
 
 func _is_networked() -> bool:
-	var tree_mp := get_tree().get_multiplayer()
+	# get_tree() can be null during teardown or very early lifecycle
+	var tree := get_tree()
+	if tree == null:
+		return false
+	var tree_mp := tree.get_multiplayer()
 	return tree_mp != null and tree_mp.multiplayer_peer != null
 
 
@@ -74,25 +78,25 @@ func add_score(points: int) -> void:
 		rpc("_rpc_sync_score", score)
 
 func restart_game() -> void:
-    # In networked mode, only server performs restart; offline proceeds locally
-    if _is_networked() and not multiplayer.is_server():
-        rpc_id(1, "_rpc_request_restart")
-        return
+	# In networked mode, only server performs restart; offline proceeds locally
+	if _is_networked() and not multiplayer.is_server():
+		rpc_id(1, "_rpc_request_restart")
+		return
 	
-    _apply_restart_state()
-    # Ask world to reset round positions/state immediately
-    var world := get_tree().current_scene
-    if world and world.has_method("_reset_round"):
-        world._reset_round()
-	# Reload current game scene to reset everything to start state (offline)
-    if not _is_networked():
+	_apply_restart_state()
+	# Ask world to reset round positions/state immediately
+	var world := get_tree().current_scene
+	if world and world.has_method("_reset_round"):
+		world._reset_round()
+	# In offline mode, prefer an in-place reset; if you still want a reload, do it deferred
+	if not _is_networked():
 		if game_scene != null:
-			get_tree().change_scene_to_packed(game_scene)
+			call_deferred("_deferred_change_scene_packed")
 		else:
 			# Fallback: reload current scene by path
 			var path := get_tree().current_scene.scene_file_path
 			if path != "" and ResourceLoader.exists(path):
-				get_tree().change_scene_to_file(path)
+				call_deferred("_deferred_change_scene_path", path)
 	if _is_networked():
 		rpc("_rpc_sync_restart")
 
@@ -122,11 +126,22 @@ func _apply_restart_state() -> void:
 	if ui_manager and ui_manager.has_method("hide_game_over"):
 		ui_manager.hide_game_over()
 
+func _deferred_change_scene_packed() -> void:
+	if game_scene != null:
+		get_tree().change_scene_to_packed(game_scene)
+
+func _deferred_change_scene_path(path: String) -> void:
+	if path != "" and ResourceLoader.exists(path):
+		get_tree().change_scene_to_file(path)
+
 func _call_deferred_shake() -> void:
 	call_deferred("_shake_camera", 6.0, 0.25)
 
 func _shake_camera(intensity: float = 6.0, duration: float = 0.25) -> void:
-	var cam: Camera2D = get_viewport().get_camera_2d()
+	var tree := get_tree()
+	if tree == null:
+		return
+	var cam: Camera2D = tree.get_camera_2d()
 	if cam == null:
 		return
 	var original_offset: Vector2 = cam.offset

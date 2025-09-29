@@ -9,8 +9,8 @@ extends CharacterBody2D
 var is_local_player: bool = false
 var _anim: AnimatedSprite2D
 var _camera: Camera2D
-var _default_frames: SpriteFrames = null
-var _defender_frames: SpriteFrames = null
+var _default_frames: SpriteFrames
+var _defender_frames: SpriteFrames
 var _role: String = "thrower"
 @export var role: String:
 	get:
@@ -22,6 +22,8 @@ const SPEED := 100.0
 const ACCELERATION := 1500.0
 const FRICTION := 1200.0
 
+const PUNCH_COOLDOWN := 0.4
+
 var _last_dir_vec: Vector2 = Vector2.DOWN
 
 # Throwing (for thrower role)
@@ -30,11 +32,14 @@ signal ammo_changed(count: int, max_count: int)
 const MAX_SLIPPERS := 1
 var slippers_available: int = MAX_SLIPPERS
 var is_aiming: bool = false
-var _aim_arrow: Node2D = null
+var _aim_arrow: Node2D
 const CHARGE_TIME := 1.0
 const MIN_SPEED_MULT := 0.7
 const MAX_SPEED_MULT := 2.0
 var _aim_started_at: float = 0.0
+var _mouse_prev: bool = false
+var _last_punch_time: float = -1.0
+var _grab_prev: bool = false
 
 func _ready() -> void:
 	_anim = get_node_or_null("AnimatedSprite2D") as AnimatedSprite2D
@@ -144,9 +149,15 @@ func _handle_input(delta: float) -> void:
 		_handle_defender_input()
 
 func _handle_thrower_input() -> void:
-	# Use _unhandled_input-like polling for mouse button states to avoid focus issues
-	# Start aim on press
-	if Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT):
+	# Robust press/release detection: mouse or Space (ui_accept)
+	var mouse_down := Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT)
+	var space_down := Input.is_action_pressed("ui_accept")
+	var pressed := mouse_down or space_down
+	var just_pressed := (pressed and not _mouse_prev) or Input.is_action_just_pressed("ui_accept")
+	var just_released := ((not pressed) and _mouse_prev) or Input.is_action_just_released("ui_accept")
+
+	# Start aim on just-press
+	if just_pressed:
 		if not is_aiming and slippers_available > 0:
 			is_aiming = true
 			_aim_started_at = float(Time.get_ticks_msec()) / 1000.0
@@ -156,17 +167,28 @@ func _handle_thrower_input() -> void:
 				add_child(_aim_arrow)
 				if _aim_arrow.has_method("_set_length"):
 					_aim_arrow._set_length(48.0)
-	else:
-		# Release to throw
-		if is_aiming:
-			var dir_vec := (get_global_mouse_position() - global_position).normalized()
-			if dir_vec == Vector2.ZERO:
-				dir_vec = (_last_dir_vec if _last_dir_vec.length() > 0 else Vector2.DOWN).normalized()
-			var now: float = float(Time.get_ticks_msec()) / 1000.0
-			var t: float = clamp((now - _aim_started_at) / CHARGE_TIME, 0.0, 1.0)
-			var power_mult: float = lerp(MIN_SPEED_MULT, MAX_SPEED_MULT, t)
-			_stop_aim()
-			_throw_network_slipper(dir_vec, power_mult)
+
+	# Release to throw
+	if just_released and is_aiming:
+		var dir_vec := (get_global_mouse_position() - global_position).normalized()
+		if dir_vec == Vector2.ZERO:
+			dir_vec = (_last_dir_vec if _last_dir_vec.length() > 0 else Vector2.DOWN).normalized()
+		var now: float = float(Time.get_ticks_msec()) / 1000.0
+		var t: float = clamp((now - _aim_started_at) / CHARGE_TIME, 0.0, 1.0)
+		var power_mult: float = lerp(MIN_SPEED_MULT, MAX_SPEED_MULT, t)
+		_stop_aim()
+		_throw_network_slipper(dir_vec, power_mult)
+
+	_mouse_prev = pressed
+
+	# Manual grab (E key) to retrieve slipper via server RPC
+	var grab_down := Input.is_physical_key_pressed(69) # 'E'
+	var grab_just_pressed := grab_down and not _grab_prev
+	if grab_just_pressed:
+		var world := get_tree().current_scene
+		if world and world.has_method("_rpc_request_grab_slipper"):
+			world.rpc("_rpc_request_grab_slipper", global_position, multiplayer.get_unique_id())
+	_grab_prev = grab_down
 
 	# Update arrow while aiming
 	if is_aiming and _aim_arrow != null:
@@ -195,10 +217,31 @@ func _throw_network_slipper(dir_vec: Vector2, power_mult: float) -> void:
 		ammo_changed.emit(slippers_available, MAX_SLIPPERS)
 
 func _handle_defender_input() -> void:
-	# Optional: Press Numpad 0 to print punch action (placeholder for network catch)
-	if Input.is_key_pressed(KEY_KP_0):
-		# Placeholder punch window - could add area checks or RPC later
-		pass
+	# Punch on mouse or Space with a short cooldown
+	var mouse_down := Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT)
+	var space_down := Input.is_action_pressed("ui_accept")
+	var pressed := mouse_down or space_down
+	var just_pressed := (pressed and not _mouse_prev) or Input.is_action_just_pressed("ui_accept")
+	if just_pressed:
+		var now := float(Time.get_ticks_msec()) / 1000.0
+		if _last_punch_time < 0.0 or (now - _last_punch_time) >= PUNCH_COOLDOWN:
+			_last_punch_time = now
+			var dir_vec := (get_global_mouse_position() - global_position)
+			if dir_vec.length() == 0.0:
+				dir_vec = (_last_dir_vec if _last_dir_vec.length() > 0 else Vector2.DOWN)
+			var world := get_tree().current_scene
+			if world and world.has_method("_rpc_defender_punch"):
+				world.rpc("_rpc_defender_punch", global_position, dir_vec.normalized(), multiplayer.get_unique_id())
+	_mouse_prev = pressed
+
+	# Defender interact (E key): grab/place can via server RPC
+	var grab_down := Input.is_physical_key_pressed(69)
+	var grab_just_pressed := grab_down and not _grab_prev
+	if grab_just_pressed:
+		var world2 := get_tree().current_scene
+		if world2 and world2.has_method("_rpc_defender_interact_can"):
+			world2.rpc("_rpc_defender_interact_can", global_position, multiplayer.get_unique_id())
+	_grab_prev = grab_down
 
 func _apply_role_visual() -> void:
 	# Simple tint based on role to identify in-game quickly

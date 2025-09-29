@@ -19,6 +19,13 @@ var _attackers_used: Dictionary = {}
 var _slipper_seq: int = 0
 var _owner_slippers: Dictionary = {}
 
+# Interact ranges and tag timing
+const GRAB_RADIUS := 44.0
+const PUNCH_RADIUS := 80.0
+const GRAB_TIME := 0.6
+var _grab_vulnerable_until: Dictionary = {}
+var _grab_pending: Dictionary = {}
+
 func _ready() -> void:
 	# If game is set to SINGLEPLAYER, ensure no multiplayer peer is active (clear leftovers)
 	if Engine.has_singleton("GameConfig"):
@@ -292,10 +299,13 @@ func _spawn_network_can() -> void:
 
 func _spawn_network_player_with_role(peer_id: int, index: int, role: String) -> void:
 	var spawner: MultiplayerSpawner = get_node_or_null("NetworkSpawner")
-	if spawner == null or network_player_scene == null:
+	if network_player_scene == null:
+		print("[World] ERROR: network_player_scene missing, cannot spawn player")
 		return
+	if spawner == null:
+		print("[World] WARN: NetworkSpawner not found, proceeding with manual spawn only")
 
-	# Always instance locally and add to scene, then replicate via spawner
+	# Always instance locally and add to scene, then replicate via RPC
 	var player_inst: Node2D = network_player_scene.instantiate()
 	player_inst.name = "Player_%s" % peer_id
 	
@@ -327,6 +337,10 @@ func _spawn_network_player_with_role(peer_id: int, index: int, role: String) -> 
 	# Add to the world before spawning for network replication
 	add_child(player_inst)
 	player_inst.global_position = spawn_pos
+	# Ensure visibility stays above the TileMap
+	if player_inst is CanvasItem:
+		(player_inst as CanvasItem).z_as_relative = false
+		(player_inst as CanvasItem).z_index = 200
 	# Initialize sync_position so remote sides don't lerp to (0,0)
 	if "sync_position" in player_inst:
 		player_inst.set("sync_position", spawn_pos)
@@ -351,10 +365,15 @@ func _rpc_spawn_remote_player(peer_id: int, role: String, spawn_pos: Vector2) ->
 		return
 	if get_node_or_null("Player_%s" % peer_id) != null:
 		return
+	print("[World][Client] Spawning remote player ", peer_id, " as ", role, " at ", spawn_pos)
 	var player_inst: Node2D = network_player_scene.instantiate()
 	player_inst.name = "Player_%s" % peer_id
 	add_child(player_inst)
 	player_inst.global_position = spawn_pos
+	# Ensure visibility above TileMap
+	if player_inst is CanvasItem:
+		(player_inst as CanvasItem).z_as_relative = false
+		(player_inst as CanvasItem).z_index = 200
 	if "sync_position" in player_inst:
 		player_inst.set("sync_position", spawn_pos)
 	if "role" in player_inst:
@@ -484,6 +503,21 @@ func _on_peer_connected(peer_id: int) -> void:
 		if did_reassign:
 			_reposition_players_after_role_change()
 			_round_begin_state()
+		# Ensure the newly joined client sees all already-present players (including host)
+		var current_roles: Dictionary = {}
+		if Engine.has_singleton("GameConfig"):
+			current_roles = GameConfig.roles if "roles" in GameConfig else {}
+		for child in get_children():
+			if child is Node2D and String(child.name).begins_with("Player_"):
+				var parts := String(child.name).split("_")
+				if parts.size() >= 2:
+					var existing_id := int(parts[1])
+					if existing_id == peer_id:
+						continue
+					var existing_role := String(current_roles.get(existing_id, "thrower"))
+					var existing_pos := (child as Node2D).global_position
+					print("[World] Informing ", peer_id, " to spawn Player_", existing_id, " as ", existing_role)
+					rpc_id(peer_id, "_rpc_spawn_remote_player", existing_id, existing_role, existing_pos)
 
 func _on_peer_disconnected(peer_id: int) -> void:
 	print("[World] Peer disconnected: ", peer_id)
@@ -520,6 +554,7 @@ func _rpc_spawn_slipper(pos: Vector2, dir: Vector2, power: float, owner_peer_id:
 	# Only the server performs the authoritative spawn
 	if not multiplayer.is_server():
 		return
+	print("[World] _rpc_spawn_slipper from ", owner_peer_id, " at ", pos, " dir=", dir, " power=", power)
 	# Instance and configure slipper (RPC-based replication)
 	var slipper_scene: PackedScene = preload("res://scenes/slipper.tscn") if ResourceLoader.exists("res://scenes/slipper.tscn") else null
 	if slipper_scene == null:
@@ -619,6 +654,187 @@ func _rpc_despawn_remote_slipper(slipper_name: String) -> void:
 	var slipper := parent_node.get_node_or_null(slipper_name)
 	if slipper:
 		slipper.queue_free()
+
+@rpc("any_peer", "call_local", "reliable")
+func _rpc_defender_punch(origin: Vector2, dir: Vector2, peer_id: int) -> void:
+	# Server validates and applies punch to nearest slipper
+	if not multiplayer.is_server():
+		return
+	var nearest_slipper: Node2D = null
+	var d2_slipper := 1e12
+	for n in get_tree().get_nodes_in_group("slipper"):
+		if n is Node2D:
+			var d2 := ((n as Node2D).global_position - origin).length_squared()
+			if d2 < d2_slipper:
+				d2_slipper = d2
+				nearest_slipper = n
+	var nearest_can: Node2D = null
+	var d2_can := 1e12
+	for c in get_tree().get_nodes_in_group("can"):
+		if c is Node2D:
+			var d2 := ((c as Node2D).global_position - origin).length_squared()
+			if d2 < d2_can:
+				d2_can = d2
+				nearest_can = c
+	# Choose the closer target
+	var target: Node2D = null
+	var min_d2 := d2_slipper
+	var punch_type := "slipper"
+	if d2_can < min_d2:
+		min_d2 = d2_can
+		target = nearest_can
+		punch_type = "can"
+	else:
+		target = nearest_slipper
+	# Require proximity (~80 px)
+	if target and min_d2 <= 80.0 * 80.0:
+		var speed := 900.0 if punch_type == "slipper" else 700.0
+		var v := dir.normalized() * speed
+		if "linear_velocity" in target:
+			target.set("linear_velocity", v)
+		if punch_type == "slipper":
+			if "is_thrown" in target:
+				target.set("is_thrown", true)
+			if "on_ground" in target:
+				target.set("on_ground", false)
+		if "rotation" in target:
+			target.set("rotation", v.angle())
+		print("[World] Defender ", peer_id, " punched ", punch_type, "; speed=", v.length())
+
+	# Tag attacker if they are grabbing
+	var now_s := _server_now()
+	var roles: Dictionary = {}
+	if Engine.has_singleton("GameConfig"):
+		roles = GameConfig.roles if "roles" in GameConfig else {}
+	for pid in roles.keys():
+		if String(roles[pid]).to_lower() == "thrower":
+			var p_node := get_node_or_null("Player_%s" % int(pid))
+			if p_node and p_node is Node2D:
+				var d2p := ((p_node as Node2D).global_position - origin).length_squared()
+				if d2p <= PUNCH_RADIUS * PUNCH_RADIUS and _grab_pending.has(int(pid)) and now_s <= float(_grab_vulnerable_until.get(int(pid), 0.0)):
+					_cancel_grab_for(int(pid))
+					_apply_defender_switch(int(pid))
+					print("[World] Defender tagged attacker ", pid, " -> attacker becomes IT (defender)")
+
+func _server_now() -> float:
+	return float(Time.get_ticks_msec()) / 1000.0
+
+func _cancel_grab_for(pid: int) -> void:
+	_grab_pending.erase(pid)
+	_grab_vulnerable_until.erase(pid)
+
+func _apply_defender_switch(selected_peer: int) -> void:
+	if not multiplayer.is_server():
+		return
+	if not Engine.has_singleton("GameConfig"):
+		return
+	var roles: Dictionary = GameConfig.roles.duplicate(true)
+	var current_def := _get_current_defender_id()
+	if current_def == -1:
+		return
+	for pid in roles.keys():
+		if int(pid) == selected_peer:
+			roles[pid] = "defender"
+		elif int(pid) == current_def:
+			roles[pid] = "thrower"
+	GameConfig.clear_roles()
+	GameConfig.roles = roles
+	rpc("_rpc_update_roles_client_side", roles)
+	_reposition_players_after_role_change()
+	_round_begin_state()
+
+@rpc("any_peer", "call_local", "reliable")
+func _rpc_request_grab_slipper(origin: Vector2, peer_id: int) -> void:
+	# Server validates and performs a timed grab of the owner's slipper
+	if not multiplayer.is_server():
+		return
+	var parent_node: Node = tilemap if tilemap != null else (self as Node)
+	if not _owner_slippers.has(peer_id):
+		return
+	var sl_name := String(_owner_slippers[peer_id])
+	var s := parent_node.get_node_or_null(sl_name)
+	if s == null:
+		return
+	if s is Node2D:
+		var d2 := ((s as Node2D).global_position - origin).length_squared()
+		if d2 > GRAB_RADIUS * GRAB_RADIUS:
+			return
+	# Only allow when the slipper is on the ground
+	var can_pick := false
+	if "is_on_ground" in s and s.has_method("is_on_ground"):
+		can_pick = s.is_on_ground()
+	elif "on_ground" in s:
+		can_pick = bool(s.get("on_ground"))
+	else:
+		can_pick = true
+	if not can_pick:
+		return
+	# Start grab window
+	_grab_pending[peer_id] = true
+	_grab_vulnerable_until[peer_id] = _server_now() + GRAB_TIME
+	var started := _server_now()
+	await get_tree().create_timer(GRAB_TIME).timeout
+	# Re-validate after hold time
+	if not _grab_pending.has(peer_id):
+		return
+	var s2 := parent_node.get_node_or_null(sl_name)
+	if s2 == null:
+		_cancel_grab_for(peer_id)
+		return
+	# Use player's current position to validate distance
+	var origin2 := origin
+	var p_node := get_node_or_null("Player_%s" % int(peer_id))
+	if p_node and p_node is Node2D:
+		origin2 = (p_node as Node2D).global_position
+	if s2 is Node2D:
+		var d2b := ((s2 as Node2D).global_position - origin2).length_squared()
+		if d2b > GRAB_RADIUS * GRAB_RADIUS:
+			_cancel_grab_for(peer_id)
+			return
+	# Success: despawn slipper and restore ammo
+	_on_network_slipper_picked(peer_id, sl_name)
+	_cancel_grab_for(peer_id)
+
+@rpc("any_peer", "call_local", "reliable")
+func _rpc_defender_interact_can(origin: Vector2, peer_id: int) -> void:
+	# Server toggles can carry/return for defender
+	if not multiplayer.is_server():
+		return
+	# Only current defender can carry
+	if peer_id != _get_current_defender_id():
+		return
+	var can := _find_any_can()
+	if can == null:
+		return
+	if not (can is Node2D):
+		return
+	var p_node := get_node_or_null("Player_%s" % int(peer_id))
+	if p_node == null or not (p_node is Node2D):
+		return
+	var d2 := ((can as Node2D).global_position - origin).length_squared()
+	if d2 > GRAB_RADIUS * GRAB_RADIUS and not bool(can.get("is_being_carried")):
+		return
+	# If already carrying, try to place/return
+	if bool(can.get("is_being_carried")):
+		# If near original spot, reset to original position
+		var orig: Vector2 = can.get("original_position") if "original_position" in can else (can as Node2D).global_position
+		var d_home := ((can as Node2D).global_position - orig).length()
+		if d_home <= 28.0:
+			if can.has_method("reset_to_original"):
+				can.reset_to_original()
+			if can.has_method("end_carry"):
+				can.end_carry()
+			return
+		# Drop at current location
+		if can.has_method("end_carry"):
+			can.end_carry()
+		return
+	# Begin carry if knocked down
+	var knocked := false
+	if can.has_method("is_knocked_down"):
+		knocked = can.is_knocked_down()
+	if knocked and can.has_method("begin_carry"):
+		can.begin_carry(p_node)
 
 func _on_node_added_connect_hud(n: Node) -> void:
 	if _hud_connected:

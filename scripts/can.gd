@@ -91,7 +91,6 @@ func _apply_hit_from(node: Node) -> void:
 	if not _score_pending:
 		_score_pending = true
 		call_deferred("_score_when_settled")
-
 func is_knocked_down(threshold: float = 30.0) -> bool:
 	# Consider knocked down if moved sufficiently from original position
 	return global_position.distance_to(original_position) > threshold
@@ -100,6 +99,7 @@ func begin_carry(by: Node2D) -> void:
 	# Freeze physics and attach visually to the carrier
 	is_being_carried = true
 	carrier = by
+	freeze = true
 	linear_velocity = Vector2.ZERO
 	angular_velocity = 0.0
 	# Keep as sibling but follow in _process via carrier
@@ -110,7 +110,6 @@ func end_carry() -> void:
 	is_being_carried = false
 	carrier = null
 	freeze = false
-	# Restore collisions (default to all)
 	set_deferred("collision_layer", 1)
 	set_deferred("collision_mask", 1)
 

@@ -13,6 +13,7 @@ const MAX_CLIENTS: int = 8
 @onready var start_button: Button = $UI/MainContainer/VBox/StartGameButton
 @onready var status_label: Label = $UI/MainContainer/VBox/StatusLabel
 @onready var players_list: ItemList = $UI/MainContainer/VBox/PlayersList
+var back_button: Button
 
 var is_server: bool = false
 
@@ -29,6 +30,13 @@ func _ready() -> void:
 	if host_button: host_button.pressed.connect(_on_host)
 	if join_button: join_button.pressed.connect(_on_join)
 	if start_button: start_button.pressed.connect(_on_start_game)
+	# Resolve Back button (supports multiple layouts and cases)
+	back_button = _resolve_back_button()
+	if back_button:
+		back_button.disabled = false
+		back_button.mouse_filter = Control.MOUSE_FILTER_STOP
+		back_button.focus_mode = Control.FOCUS_ALL
+		back_button.pressed.connect(_on_back)
 	
 	# Connect multiplayer signals
 	multiplayer.peer_connected.connect(_on_peer_connected)
@@ -99,16 +107,69 @@ func _on_start_game() -> void:
 	# Start game for everyone
 	rpc("_rpc_begin_game")
 
+func _on_back() -> void:
+	_cleanup_network()
+	# Return to previous section (game selection screen)
+	var game_sel := "res://scenes/game_selection.tscn"
+	if ResourceLoader.exists(game_sel):
+		get_tree().change_scene_to_file(game_sel)
+	else:
+		var menu := "res://scenes/main_menu.tscn"
+		if ResourceLoader.exists(menu):
+			get_tree().change_scene_to_file(menu)
+
+func _cleanup_network() -> void:
+	# Close any active ENet connection and clear roles/state
+	if multiplayer and multiplayer.multiplayer_peer != null:
+		var peer := multiplayer.multiplayer_peer
+		if peer and peer.has_method("close"):
+			peer.close()
+		multiplayer.multiplayer_peer = null
+	# Clear roles to avoid stale state next time
+	if Engine.has_singleton("GameConfig"):
+		if GameConfig.has_method("clear_roles"):
+			GameConfig.clear_roles()
+
+func _resolve_back_button() -> Button:
+	# Try exact path provided by user (case-sensitive): Multiplayerlobby/UI/background/backbutton
+	var candidates := [
+		"UI/background/Back Button",
+		"UI/Background/Back Button",
+		"UI/Background/BackButton",
+		"UI/MainContainer/VBox/HBoxButtons/BackButton",
+		"Multiplayerlobby/UI/background/Back Button",
+		"Multiplayerlobby/UI/background/backbutton",
+		"MultiplayerLobby/UI/background/Back Button",
+		"MultiplayerLobby/UI/background/backbutton",
+		"MultiplayerLobby/UI/background/BackButton"
+	]
+	for p in candidates:
+		if has_node(p):
+			var n := get_node(p)
+			if n is Button:
+				return n
+	# As a last resort, search under UI for any node named 'backbutton' or 'back button' (case-insensitive)
+	var ui := get_node_or_null("UI")
+	if ui:
+		var stack: Array = [ui]
+		while stack.size() > 0:
+			var cur: Node = stack.pop_back()
+			for child in cur.get_children():
+				if child is Button:
+					var nm := String(child.name).to_lower()
+					if nm == "backbutton" or nm == "back button":
+						return child
+				stack.append(child)
+	return null
+
 @rpc("any_peer", "call_local", "reliable")
 func _rpc_begin_game() -> void:
 	get_tree().change_scene_to_file("res://scenes/world.tscn")
 
 @rpc("any_peer", "call_local", "reliable")
 func _rpc_set_roles(new_roles: Dictionary) -> void:
-	if Engine.has_singleton("GameConfig"):
 		GameConfig.clear_roles()
 		GameConfig.roles = new_roles.duplicate(true)
-
 func _on_peer_connected(id: int) -> void:
 	_refresh_players()
 	if multiplayer.is_server():
@@ -167,3 +228,6 @@ func _is_valid_ipv4(ip: String) -> bool:
 		if n < 0 or n > 255:
 			return false
 	return true
+
+func _on_back1_button_pressed() -> void:
+	get_tree().change_scene_to_file("res://scenes/game_selection.tscn")
