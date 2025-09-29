@@ -161,9 +161,27 @@ func _on_body_entered(body: Node) -> void:
 		return
 
 func _on_pickup_body_entered(body: Node) -> void:
-	# Manual grab required now; this callback no longer auto-picks up the slipper.
-	# Kept for future UI prompts when a player is in range.
-	pass
+	# In local mode, allow direct pickup. In networked mode, use manual grab system.
+	if not _is_networked():
+		_try_local_pickup(body)
+
+func _try_local_pickup(body: Node) -> void:
+	# Local mode pickup logic
+	if not _is_valid_player_body(body):
+		return
+	
+	# Check if slipper is on ground and pickup cooldown has passed
+	if not on_ground:
+		return
+		
+	var now_s: float = float(Time.get_ticks_msec()) / 1000.0
+	if (now_s - _spawn_time_s) < pickup_cooldown:
+		return
+	
+	# Emit pickup signal and remove slipper
+	print("[Slipper] Local pickup by %s" % body.name)
+	emit_signal("picked_up")
+	queue_free()
 
 func _is_valid_player_body(body: Node) -> bool:
 	if body is CharacterBody2D:

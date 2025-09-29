@@ -138,20 +138,45 @@ func _call_deferred_shake() -> void:
 	call_deferred("_shake_camera", 6.0, 0.25)
 
 func _shake_camera(intensity: float = 6.0, duration: float = 0.25) -> void:
-	var tree := get_tree()
-	if tree == null:
-		return
-	var cam: Camera2D = tree.get_camera_2d()
+	# Find the active camera in the scene
+	var cam: Camera2D = null
+	var viewport := get_viewport()
+	if viewport:
+		cam = viewport.get_camera_2d()
+	
+	# Fallback: search for any Camera2D in the scene tree
 	if cam == null:
+		var root := get_tree().current_scene
+		if root:
+			cam = _find_camera_recursive(root)
+	
+	if cam == null:
+		print("[GameManager] No Camera2D found for screen shake")
 		return
+		
 	var original_offset: Vector2 = cam.offset
 	var steps: int = max(1, int(ceil(duration / 0.04)))
 	var rng := RandomNumberGenerator.new()
 	rng.randomize()
+	
 	for i in range(steps):
-		cam.offset = Vector2(rng.randf_range(-1.0, 1.0), rng.randf_range(-1.0, 1.0)) * intensity
+		var shake_amount := intensity * (1.0 - float(i) / float(steps))  # Decay over time
+		cam.offset = original_offset + Vector2(
+			rng.randf_range(-shake_amount, shake_amount),
+			rng.randf_range(-shake_amount, shake_amount)
+		)
 		await get_tree().create_timer(0.04).timeout
+	
 	cam.offset = original_offset
+
+func _find_camera_recursive(node: Node) -> Camera2D:
+	if node is Camera2D:
+		return node as Camera2D
+	for child in node.get_children():
+		var result := _find_camera_recursive(child)
+		if result:
+			return result
+	return null
 
 func set_ui_manager(ui: Node) -> void:
 	ui_manager = ui

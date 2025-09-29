@@ -17,8 +17,10 @@ var can_node: Node2D = null
 var player1: Node = null
 var can_chase_player: bool = false
 var carry_pickup_radius: float = 36.0
-var carry_drop_radius: float = 24.0
+var carry_drop_radius: float = 30.0  # Increased for easier auto-drop
 var attack_cooldown: float = 0.0
+var is_manually_carrying: bool = false
+var defender_boundary_y: float = 0.0  # Y position that defender cannot cross
 
 @onready var cam: Camera2D = $Camera2D
 
@@ -32,6 +34,9 @@ func _ready() -> void:
 	var found_can := get_tree().current_scene.find_child("Can", true, false)
 	if found_can and found_can is Node2D:
 		can_node = found_can
+		# Set defender boundary based on can position (defender stays in lower half)
+		defender_boundary_y = found_can.global_position.y - 50.0
+		print("[P2] Defender boundary set at Y: %.1f" % defender_boundary_y)
 	# Setup camera limits but do not make it current by default
 	_setup_camera_limits()
 
@@ -41,15 +46,19 @@ func _physics_process(delta: float) -> void:
 	if can_chase_player:
 		_try_catch()
 	_handle_can_interactions()
+	# Auto-drop can when reaching original position
+	_check_auto_drop_can()
 	# Cool down attack window
 	if attack_cooldown > 0.0:
 		attack_cooldown = max(0.0, attack_cooldown - delta)
 
 func _unhandled_input(event: InputEvent) -> void:
-	# Punch on Numpad 0 (KEY_KP_0). Support both keycode and physical_keycode in Godot 4.
+	# Punch on Numpad 0 (KEY_KP_0) or Space/E for can interaction
 	if event is InputEventKey and event.pressed:
 		if event.keycode == KEY_KP_0 or event.physical_keycode == KEY_KP_0 or Input.is_key_pressed(KEY_KP_0):
 			_start_attack()
+		elif event.keycode == KEY_SPACE or event.keycode == KEY_E:
+			_handle_can_pickup_drop()
 
 func _input(event: InputEvent) -> void:
 	# Also listen in _input to avoid cases where input is consumed before unhandled phase
@@ -72,6 +81,7 @@ func player_movement(delta: float) -> void:
 
 	if input_dir.length() > 0.0:
 		input_dir = input_dir.normalized()
+		
 		# Prevent entering Player 1 base: cancel inward component at the boundary
 		var p1 := player1 if player1 != null else get_tree().current_scene.find_child("player", true, false)
 		if p1:
@@ -90,6 +100,17 @@ func player_movement(delta: float) -> void:
 					# If at/inside boundary and trying to go further inward, cancel inward motion
 					if dist <= base_radius + 1.0 and inward_comp > 0.0:
 						input_dir = (input_dir - inward * inward_comp).normalized() if (input_dir - inward * inward_comp).length() > 0.001 else Vector2.ZERO
+		
+		# Prevent defender from entering attacker side (upper area)
+		if defender_boundary_y > 0.0:
+			var future_y := global_position.y + input_dir.y * SPEED * get_physics_process_delta_time()
+			if future_y < defender_boundary_y and input_dir.y < 0.0:
+				# Cancel upward movement component
+				input_dir.y = 0.0
+				if input_dir.length() > 0.001:
+					input_dir = input_dir.normalized()
+				else:
+					input_dir = Vector2.ZERO
 		var is_running: bool = Input.is_action_pressed("run")
 		var target_speed: float = SPEED * (RUN_MULTIPLIER if is_running else 1.0)
 		var accel: float = ACCELERATION * (RUN_ACCEL_MULTIPLIER if is_running else 1.0)
@@ -246,6 +267,92 @@ func on_player_slipper_thrown(_pos: Vector2) -> void:
 func on_player_returned_to_base() -> void:
 	can_chase_player = false
 
+func _handle_can_pickup_drop() -> void:
+	if can_node == null:
+		var found := get_tree().current_scene.find_child("Can", true, false)
+		if found and found is Node2D:
+			can_node = found
+	if can_node == null:
+		print("[P2] No can found for interaction")
+		return
+		
+	var distance_to_can := global_position.distance_to(can_node.global_position)
+	var carried: bool = bool(can_node.get("is_being_carried")) if can_node.has_method("get") else false
+	
+	if is_manually_carrying or carried:
+		# Drop the can
+		_drop_can()
+	elif distance_to_can <= carry_pickup_radius:
+		# Try to pick up the can if it's knocked down
+		if can_node.has_method("is_knocked_down"):
+			var knocked: bool = bool(can_node.call("is_knocked_down"))
+			if knocked:
+				_pickup_can()
+			else:
+				print("[P2] Can is not knocked down, cannot pick up")
+		else:
+			print("[P2] Can doesn't support knockdown check")
+	else:
+		print("[P2] Too far from can (distance: %.1f)" % distance_to_can)
+
+func _pickup_can() -> void:
+	if not can_node or is_manually_carrying:
+		return
+		
+	print("[P2] Picking up can manually")
+	is_manually_carrying = true
+	
+	if can_node.has_method("begin_carry"):
+		can_node.begin_carry(self)
+
+func _drop_can() -> void:
+	if not is_manually_carrying or not can_node:
+		return
+		
+	print("[P2] Dropping can manually")
+	is_manually_carrying = false
+	
+	# Check if we're near the original position to restore properly
+	var orig_val = can_node.get("original_position") if can_node.has_method("get") else null
+	if orig_val is Vector2:
+		var orig: Vector2 = orig_val
+		var distance_to_original := global_position.distance_to(orig)
+		
+		if distance_to_original <= carry_drop_radius:
+			# Close to original position - restore properly
+			if can_node.has_method("reset_to_original"):
+				can_node.reset_to_original()
+			print("[P2] Can restored to original position")
+		else:
+			# Just drop it where we are
+			if can_node.has_method("end_carry"):
+				can_node.end_carry()
+			print("[P2] Can dropped at current location")
+	else:
+		# Fallback - just end carry
+		if can_node.has_method("end_carry"):
+			can_node.end_carry()
+
+func _check_auto_drop_can() -> void:
+	# Auto-drop can when defender reaches the original can position
+	if not is_manually_carrying or not can_node:
+		return
+		
+	var orig_val = can_node.get("original_position") if can_node.has_method("get") else null
+	if orig_val is Vector2:
+		var orig: Vector2 = orig_val
+		var distance_to_original := global_position.distance_to(orig)
+		
+		# Auto-drop when close to original position
+		if distance_to_original <= carry_drop_radius:
+			print("[P2] Auto-dropping can at original position")
+			is_manually_carrying = false
+			
+			# Restore can to original position and state
+			if can_node.has_method("reset_to_original"):
+				can_node.reset_to_original()
+			print("[P2] Can automatically restored to original position")
+
 func _handle_can_interactions() -> void:
 	if can_node == null:
 		var found := get_tree().current_scene.find_child("Can", true, false)
@@ -253,25 +360,30 @@ func _handle_can_interactions() -> void:
 			can_node = found
 	if can_node == null:
 		return
-	# Interact only if the node has our helper API
-	if can_node and can_node.has_method("is_knocked_down") and can_node.has_method("begin_carry"):
-		# Auto-pickup if knocked down and close enough and not already being carried
-		var knocked: bool = bool(can_node.call("is_knocked_down"))
-		var carried: bool = bool(can_node.get("is_being_carried"))
-		if knocked and not carried and global_position.distance_to(can_node.global_position) <= carry_pickup_radius:
-			can_node.begin_carry(self)
-		# If carrying, auto-drop/reset when near original spot
-		var orig_val = can_node.get("original_position")
-		var orig: Vector2
-		if not (orig_val is Vector2):
-			return
-		orig = orig_val
-		if carried:
-			if global_position.distance_to(orig) <= carry_drop_radius:
-				if can_node.has_method("end_carry"):
-					can_node.end_carry()
-				if can_node.has_method("reset_to_original"):
-					can_node.reset_to_original()
+	
+	# Only do auto-interactions if not manually carrying
+	if not is_manually_carrying:
+		# Interact only if the node has our helper API
+		if can_node and can_node.has_method("is_knocked_down") and can_node.has_method("begin_carry"):
+			# Auto-pickup if knocked down and close enough and not already being carried
+			var knocked: bool = bool(can_node.call("is_knocked_down"))
+			var carried: bool = bool(can_node.get("is_being_carried"))
+			if knocked and not carried and global_position.distance_to(can_node.global_position) <= carry_pickup_radius:
+				can_node.begin_carry(self)
+				is_manually_carrying = true  # Track that we're now carrying
+			# If carrying, auto-drop/reset when near original spot
+			var orig_val = can_node.get("original_position")
+			var orig: Vector2
+			if not (orig_val is Vector2):
+				return
+			orig = orig_val
+			if carried:
+				if global_position.distance_to(orig) <= carry_drop_radius:
+					if can_node.has_method("end_carry"):
+						can_node.end_carry()
+					if can_node.has_method("reset_to_original"):
+						can_node.reset_to_original()
+					is_manually_carrying = false  # No longer carrying
 
 func _setup_camera_limits() -> void:
 	if cam == null:

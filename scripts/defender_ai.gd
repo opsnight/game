@@ -9,7 +9,8 @@ signal caught_slipper()
 var can_node: Node2D = null
 var can_original_position: Vector2
 var target_slipper: Node2D = null
-var state: String = "idle"  # "idle", "chasing", "restoring_can"
+var state: String = "idle"  # "idle", "chasing", "restoring_can", "carrying_can"
+var is_carrying_can: bool = false
 @onready var anim: AnimatedSprite2D = $AnimatedSprite2D
 
 func _ready() -> void:
@@ -19,6 +20,10 @@ func _ready() -> void:
 		can_original_position = can_node.global_position
 
 func _physics_process(delta: float) -> void:
+	# Handle punch/interact input for can pickup/drop (try multiple keys)
+	if Input.is_action_just_pressed("punch") or Input.is_action_just_pressed("ui_accept") or Input.is_physical_key_pressed(KEY_SPACE) or Input.is_physical_key_pressed(KEY_E):
+		_handle_punch_action()
+	
 	match state:
 		"idle":
 			_idle_behavior()
@@ -26,6 +31,8 @@ func _physics_process(delta: float) -> void:
 			_chase_slipper()
 		"restoring_can":
 			_restore_can()
+		"carrying_can":
+			_carrying_can_behavior()
 	
 	move_and_slide()
 	_update_animation()
@@ -118,6 +125,65 @@ func _find_closest_slipper() -> Node2D:
 	
 	return closest
 
+func _handle_punch_action() -> void:
+	if not can_node:
+		return
+		
+	var distance_to_can := global_position.distance_to(can_node.global_position)
+	
+	if is_carrying_can:
+		# Drop the can at current location
+		_drop_can()
+	elif distance_to_can <= 50.0 and can_node.has_method("is_knocked_down") and can_node.is_knocked_down():
+		# Pick up the can if it's knocked down and we're close enough
+		_pickup_can()
+
+func _pickup_can() -> void:
+	if not can_node or is_carrying_can:
+		return
+		
+	print("[Defender] Picking up can")
+	is_carrying_can = true
+	state = "carrying_can"
+	
+	# Tell the can it's being carried
+	if can_node.has_method("begin_carry"):
+		can_node.begin_carry(self)
+
+func _drop_can() -> void:
+	if not is_carrying_can or not can_node:
+		return
+		
+	print("[Defender] Dropping can")
+	is_carrying_can = false
+	
+	# Check if we're at the original position to restore it properly
+	var distance_to_original := global_position.distance_to(can_original_position)
+	if distance_to_original <= 40.0:
+		# Close to original position - restore properly
+		can_node.global_position = can_original_position
+		if can_node.has_method("restore"):
+			can_node.restore()
+		print("[Defender] Can restored to original position")
+	else:
+		# Just drop it where we are
+		if can_node.has_method("end_carry"):
+			can_node.end_carry()
+	
+	state = "idle"
+
+func _carrying_can_behavior() -> void:
+	# Move toward original can position while carrying
+	var to_original := can_original_position - global_position
+	var distance := to_original.length()
+	
+	if distance > 10.0:
+		# Move toward original position
+		velocity = to_original.normalized() * speed * 0.7
+	else:
+		# Close enough - auto-drop and restore
+		_drop_can()
+
 func on_can_hit() -> void:
 	# Called when the can is hit - start restoration after delay
 	await get_tree().create_timer(1.5).timeout
@@ -129,8 +195,17 @@ func _update_animation() -> void:
 		return
 	var moving: bool = velocity.length() > 5.0
 	var desired: String = "f_idle"
-	if moving:
-		desired = "f_walk"
+	
+	# Show different animation when carrying can
+	if is_carrying_can:
+		desired = "f_carry_idle" if not moving else "f_carry_walk"
+		# Fallback to regular animations if carry animations don't exist
+		var frames := anim.sprite_frames
+		if frames and not frames.has_animation(desired):
+			desired = "f_idle" if not moving else "f_walk"
+	else:
+		desired = "f_idle" if not moving else "f_walk"
+	
 	var frames := anim.sprite_frames
 	if frames and frames.has_animation(desired) and anim.animation != desired:
 		anim.play(desired)
